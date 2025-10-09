@@ -21,3 +21,6 @@ https://github.com/mrvollger/k-mer-variant-phasing
 ## Mutational Spectrum analysis
 https://github.com/ryansohny/VCF2SPECTRUM
 
+# Haplotype selective chromatin accessibility analysis
+https://github.com/mrvollger/SMaHT-DSA-figures
+
