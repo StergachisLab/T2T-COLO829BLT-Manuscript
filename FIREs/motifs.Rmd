@@ -1,0 +1,43 @@
+```{r}
+T=fread(
+    "/mmfs1/gscratch/stergachislab/sjn/projects/fimo-scans/proj1/parsed.overlaps/jaspar/non-redundant/with-somatic-snvs/overlaps.bed"
+    )
+colnames(T)[2:3] = c("motif_start", "motif_end")
+BL=fread(
+    "/mmfs1/gscratch/stergachislab/sjn/projects/fimo-scans/proj1/parsed.overlaps/jaspar/non-redundant/without-somatic-snvs/overlaps.bed", fill=TRUE
+    )
+colnames(BL)[2:3] = c("motif_start", "motif_end")
+
+mdf = bind_rows(list(T=T, BL=BL),
+    .id="source"
+) %>%
+mutate(length=motif_end-motif_start) %>%
+as.tibble()
+colnames(mdf)
+```
+
+```{r}
+s_mdf = mdf %>%
+    group_by(contig, start, end) %>%
+    summarise(
+        T_motifs = sum(source=="T"),
+        BL_motifs = sum(source=="BL")
+    ) %>%
+    data.table 
+
+s_mdf %>%
+    fwrite(
+        "Tables/motif_overlaps_jaspar_non-redundant_with_without_somatic_snvs_summary.bed",
+    )
+s_mdf
+```
+
+```{r}
+mdf = mdf %>%
+    group_by(contig) %>%
+    arrange(`alt-motif-ID`, source, `p-val`, .by_group = TRUE) 
+mdf %>% 
+    fwrite(
+        "Tables/motif_overlaps_jaspar_non-redundant_with_without_somatic_snvs.bed",
+    )
+```

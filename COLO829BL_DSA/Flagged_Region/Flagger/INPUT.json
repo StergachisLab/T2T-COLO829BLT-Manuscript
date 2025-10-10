@@ -1,0 +1,28 @@
+{
+  "FlaggerEndToEnd.refSDBed": REF_SD.bed
+  "FlaggerEndToEnd.preprocess.variantCallingMemory": 48,
+  "FlaggerEndToEnd.sampleName": ASSEMBLY_NAME,
+  "FlaggerEndToEnd.fai": DIPLOIDY_ASSEMBLY.fasta.fai ,
+  "FlaggerEndToEnd.stats.threadCount": 4,
+  "FlaggerEndToEnd.refBiasedRegionFactorArray": [1.25, 0.75],
+  "FlaggerEndToEnd.flagger_alt_removed.isDiploid": true,
+  "FlaggerEndToEnd.stats_alt_removed.threadCount": 4,
+  "FlaggerEndToEnd.flagger.isDiploid": true,
+  "FlaggerEndToEnd.stats_alt_removed.memSize": 4,
+  "FlaggerEndToEnd.maxReadDivergence": 0.02,
+  "FlaggerEndToEnd.refCntrCtBed": REF_CT.bed,
+  "FlaggerEndToEnd.refSexBed":  REF_SEX.bed,
+  "FlaggerEndToEnd.variantCaller": "dv",
+  "FlaggerEndToEnd.stats.memSize": 4,
+  "FlaggerEndToEnd.secphaseOptions": "--hifi",
+  "FlaggerEndToEnd.project.isAssemblySplit": false,
+  "FlaggerEndToEnd.assemblyFastaGz":  DIPLOIDY_ASSEMBLY.fasta,
+  "FlaggerEndToEnd.suffix": SUFFIX,
+  "FlaggerEndToEnd.refBiasedBlocksBedArray": [REF_HIFI_R1_BIASED.bed, REF_HIFI_R2_BIASED.bed],
+  "FlaggerEndToEnd.refCntrBed": REF_SENSAT.bed,
+  "FlaggerEndToEnd.refBiasedRegionNameArray": ["hifi_biased_high", "hifi_biased_low"],
+  "FlaggerEndToEnd.refName": "hs1",
+  "FlaggerEndToEnd.readAlignmentBam": HIFI_READS_TO_ASSEMBLY.bam,
+  "FlaggerEndToEnd.hap1ToRefBam": HAP1_ASSEMBLY_TO_REF.bam,
+  "FlaggerEndToEnd.hap2ToRefBam": HAP2_ASSEMBLY_TO_REF.bam
+}

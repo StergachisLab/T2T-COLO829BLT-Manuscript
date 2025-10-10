@@ -1,0 +1,174 @@
+```{r}
+source("Rscripts/utils.R")
+#library(mrvplot)
+```
+
+```{r}
+hsca_with_somatic_f = "Tables/hap-selective-peaks-with-somatic-variants.bed"
+hsca_with_somatic = fread(hsca_with_somatic_f)
+t_cram = metadata %>% filter(Datatype =="FIRE_cram_T") %>% pull(Location)
+bl_cram = metadata %>% filter(Datatype =="FIRE_cram_BL") %>% pull(Location)
+```
+
+```{r}
+dist = 2e3
+ft_center = bind_rows(list(
+    T=fread(cmd=glue("ft center --bed {hsca_with_somatic_f} {t_cram} --dist {dist} -s -r")),
+    BL=fread(cmd=glue("ft center --bed {hsca_with_somatic_f} {bl_cram} --dist {dist} -s -r"))
+    ),
+    .id="sample"
+    ) %>% 
+    filter(centered_position_type %in% c("msp", "nuc"))
+
+```
+
+```{r}
+max_reads = 75
+keep_reads = ft_center %>% 
+    group_by(sample, HP, centering_position, chrom) %>%
+    select(query_name) %>%
+    unique() %>%
+    sample_n(min(n(), max_reads))
+
+plot_table = ft_center %>%
+    filter(query_name %in% keep_reads$query_name) %>%
+    mutate(
+        centered_position_type = case_when(
+            centered_position_type == "msp" & centered_qual > 0 ~ "fire",
+            TRUE ~ centered_position_type
+        ),
+        color = case_when(
+            centered_position_type == "fire" ~ "#af0000",
+            centered_position_type == "msp" ~ "#9370DB",
+            centered_position_type == "nuc" ~ "gray",
+        ),
+        is_centered_fire = centered_position_type == "fire" & centered_start <= 100 & centered_end >= 100,
+    ) %>%
+    group_by(query_name) %>%
+    mutate(
+        has_centered_fire = any(is_centered_fire),
+        total_fire_bp = sum(centered_end[centered_position_type=="fire"]-centered_start[centered_position_type=="fire"]),
+    ) %>%
+    ungroup() %>%
+    group_by(sample, chrom, centering_position, HP) %>%
+    # give each read name a unique number within the group
+    # arrange within the group
+    arrange(
+        !has_centered_fire,
+        -total_fire_bp,
+    ) %>%
+    mutate(
+        y=-as.numeric(factor(query_name, levels=unique(query_name))),
+        group = paste0(chrom, ":", centering_position),
+    )
+table(plot_table$y)
+```
+
+
+```{r}
+plot_table %>%
+    filter(query_name %in% keep_reads$query_name) %>%
+    ggplot(aes(color=color)) +
+    geom_segment(aes(x=centered_start, xend=centered_end, y=y)) +
+    facet_nested(group+HP~sample, scales="free_y", switch="y") +
+    scale_color_identity() +
+    scale_x_continuous(
+        "Distance from peak center (bp)",
+        #limits=c(-dist, dist),
+    ) +
+    coord_cartesian(
+        xlim=c(-dist, dist),
+    ) +
+    # remove y axis labels
+    scale_y_continuous(
+        "",
+        labels=NULL,
+        breaks=NULL
+    ) +
+    theme_cowplot(font_size=6) +
+    #my_grid()
+    # move facet labels to the left
+    theme()
+
+
+my_ggsave("Figures/hap-selective-peaks-with-somatic-variants-ft-center.pdf", width=4, height=12)
+```
+
+
+```{r}
+x="Tables/somatic-snvs-in-hap-selective-peaks.to.hg38.bed"
+in_hg38 = fread(x) %>%
+    # strip the string id:Z: from the ID column
+    mutate(
+        V4 = sub("id:Z:", "", V4)
+    )
+colnames(in_hg38) = c("chrom", "start", "end", "ID")
+in_dsa = fread("Tables/somatic-snvs-in-hap-selective-peaks.to.dsa.bed")%>%
+    # strip the string id:Z: from the ID column
+    mutate(
+        V4 = sub("id:Z:", "", V4),
+        V4 = sub("id:Z:", "", V4)
+    )
+colnames(in_dsa) = c("chrom", "start", "end", "ID")
+in_dsa = in_dsa %>% 
+    rowwise() %>%
+    filter(
+        !grepl(chrom, ID)
+    ) %>%
+    ungroup()
+```
+
+```{r}
+somatic_snv = snv
+somatic_snv %>%
+    bed_map(
+        hsca_with_somatic %>% rename(
+            chrom = `#chrom`,
+        ),
+        n_hcsa = n(),
+        hap_diff_t = hap_diff_t,
+        hap_diff_bl = hap_diff_bl,
+        #t_frac_acc_h1 = t_fire_h1 / t_cov_h1,
+        #t_frac_acc_h2 = t_fire_h2 / t_cov_h2,
+        #b_frac_acc_h1 = bl_fire_h1 / bl_cov_h1,
+        #b_frac_acc_h2 = bl_fire_h2 / bl_cov_h2,
+    ) %>%
+    mutate(
+        ID=paste0(CHROM, ":", POS, "_", REF, ">", ALT),
+    ) %>%
+    select(
+        -FILTER,-CHROM, -POS,
+        -INFO, -FORMAT,
+        -COLO829T_PassageB_DSA
+    ) %>%
+    # move chrom start and end to front
+    select(chrom, start, end, ID, everything()) %>%
+    filter(n_hcsa > 0, !is.na(n_hcsa)) %>%
+    mutate(
+        somatic_snv_increases_accessibility = case_when(
+            grepl("haplotype1", chrom) & hap_diff_t > 0 ~ TRUE,
+            grepl("haplotype2", chrom) & hap_diff_t < 0 ~ TRUE,
+            TRUE ~ FALSE
+        ),
+    )  %>%
+    # merge with dsa coordinates
+    left_join(
+        in_dsa,
+        by="ID",
+        suffix=c("", ".dsa")
+    ) %>%
+    # merge with hg38 coordinates
+    left_join(
+        in_hg38,
+        by="ID",
+        suffix=c("", ".hg38")
+    ) %>%
+    fwrite("Tables/somatic-snvs-in-hap-selective-peaks.bed", row.names=F, quote=F, sep="\t")
+
+
+
+```
+
+```{r}
+
+```

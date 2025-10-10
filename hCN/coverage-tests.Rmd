@@ -1,0 +1,192 @@
+```{r}
+source("Rscripts/utils.R")
+colo_namer = function(variable, value) {
+    names = list(bl="Blood", tb="Tumor (B)", ta ="Tumor (A)")
+    return(names[value])
+}
+```
+
+
+```{r}
+bl_cov_f = "/mmfs1/gscratch/stergachislab/mvollger/projects/scratch/smaht-coverages/BL.per-base.bed.gz"
+tb_cov_f = "/mmfs1/gscratch/stergachislab/mvollger/projects/scratch/smaht-coverages/TB.per-base.bed.gz"
+```
+
+
+```{r}
+bl_cov_sampled = my_read_bed(bl_cov_f) 
+tb_cov_sampled = my_read_bed(tb_cov_f) 
+cn = my_read_bed(cn_f) 
+```
+
+
+
+```{r}
+min_obs = 1000
+sampled_cov = bind_rows(list(
+    bl=bl_cov_sampled,
+    tb=tb_cov_sampled
+), .id="sample") %>% rename(
+    coverage = V4,
+) %>%
+    filter(coverage > 0) %>%
+    group_by(sample) %>%
+    mutate(weight = end-start) %>%
+    sample_n(10e6, prob=weight) %>%
+    # make a new column for cov_adj that maxes out at the 99th percentile
+    mutate(
+        cov_adj = pmin(coverage, quantile(coverage, 0.995)),
+    ) %>%
+    group_by(chrom, sample) %>%
+    mutate(
+        n_obs = n(),
+    ) %>%
+    filter(n_obs >= min_obs)
+chroms = sort(unique(sampled_cov$chrom))
+# make a list alternating TRUE FALSE with the chroms as names
+chroms = setNames(rep(c(TRUE, FALSE), length.out=length(chroms)), chroms)
+
+# make a new column that has the chroms true false values
+sampled_cov = sampled_cov %>%
+    mutate(
+        color = chroms[as.character(chrom)],
+    )
+
+sampled_cov
+```
+
+
+# get medians 
+```{r}
+# make df with median per sample
+median_sample = sampled_cov %>%
+    group_by(sample) %>%
+    summarise(median_cov = median(coverage))
+median_sample
+
+# make df with median per sample and chrom
+median_sample_chrom = sampled_cov %>%
+    group_by(sample, chrom, color) %>%
+    summarise(median_cov = median(coverage))
+```
+
+
+# make a plot fo the data faceted by chromosome and sample
+```{r}
+sampled_cov %>%
+    group_by(sample, chrom, color) %>%
+    mutate(
+        contig_median = median(coverage),
+    ) %>%
+    ungroup() %>%
+    arrange(contig_median) %>%
+    mutate(
+        chrom = factor(chrom, levels=unique(chrom)),
+    ) %>%
+    group_by(sample) %>%
+    sample_n(100e3) %>%
+    ggplot(aes(x=start, y=cov_adj, color=color)) +
+    geom_point(size=0.1, alpha=0.25) +
+    # plot horizontal lines for the median coverage per sample
+    geom_hline(data=median_sample, aes(yintercept=median_cov), linetype="dashed") +
+    # plot horizontal lines for the median coverage per sample and chrom
+    geom_hline(data=median_sample_chrom, aes(yintercept=median_cov), color="red", linetype="dashed") +
+    # free the space and the scales in the facets
+    facet_grid(sample~chrom, space="free_x", scales="free") +
+    theme_cowplot() +
+    scale_color_manual(
+        # used darkblue and darkorange
+        values=c("TRUE"="darkblue", "FALSE"="darkorange"),
+    ) + 
+    scale_x_continuous(
+        "",
+        labels = NULL,
+    ) +
+    theme(
+        legend.position = "none",
+    )
+my_ggsave("Figures/coverage-tests-sampled-coverage.pdf", width=24, height=6)
+```
+
+
+# simple distrubution of coverage
+```{r}
+inferred_median = 123
+inferred_median_bl = 176
+t_lines = data.table(
+            xintercept=c(
+                inferred_median/2,
+                #inferred_median*2,
+                inferred_median*1.5,
+                inferred_median
+            ),
+            sample="tb"
+        )
+b_lines = data.table(
+            xintercept=c(
+                inferred_median_bl
+            ),
+            sample="bl"
+        ) 
+sampled_cov %>%
+    group_by(sample) %>%
+    sample_n(2e6) %>%
+    mutate(
+        coverage = case_when(
+            coverage > 250 ~ 250,
+            TRUE ~ coverage
+        )
+    ) %>%
+    ggplot(aes(x=coverage, fill=sample)) +
+    geom_histogram(binwidth=1, alpha=0.5) +
+    geom_vline(
+        data=t_lines,
+        aes(xintercept=xintercept, group=sample),
+        linetype="dashed",
+        color="darkred",
+    )+
+    geom_vline(
+        data=b_lines,
+        aes(xintercept=xintercept, group=sample),
+        linetype="dashed",
+        color="darkred",
+    )+
+    geom_label(
+        data=bind_rows(list(b_lines,t_lines)),
+        aes(x=xintercept, label=xintercept, fill=NULL),
+        y=0, vjust=1, 
+        size=1,
+    ) +
+    scale_fill_manual(values=c("bl"="darkblue", "tb"="darkorange")) +
+    scale_x_continuous(
+        "Coverage",
+        labels=comma,
+    ) +
+    scale_y_continuous(
+        "Count",
+        labels=comma,
+    ) +
+    facet_grid(sample~., scales="free_y", labeller=colo_namer) +
+    # turn off clipping
+    coord_cartesian(clip="off") +
+    my_grid() +
+    theme(
+        legend.position = "none",
+    )
+my_ggsave("Figures/coverage-tests-sampled-coverage-hist.pdf", width=3, height=2)
+```
+
+```{r}
+sampled_cov %>%
+    filter(sample=="tb") %>%
+    mutate(
+        grouped_cov_adj = cut(cov_adj, breaks=seq(0, 300, by=5), include.lowest=TRUE, right=FALSE),
+    )  %>%
+    group_by(grouped_cov_adj) %>%
+    summarise(
+        n=n()
+    ) %>%
+    filter(
+        n==max(n)
+    )
+```

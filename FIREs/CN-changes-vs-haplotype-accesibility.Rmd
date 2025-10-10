@@ -1,0 +1,286 @@
+```{r}
+source("Rscripts/utils.R")
+#library(mrvplot)
+```
+
+# where the hap-selective sites are
+```{r}
+unique_hap_selective_t = bl_vs_t_dataset_filtered %>%
+    filter(
+        hap_diff_t_p_adjust <= 0.05
+    ) %>%
+    filter(
+        (hap_diff_bl_p_adjust <= 0.05) == FALSE
+    ) 
+unique_hap_selective_t
+
+unique_hap_selective_t_no_somatic = unique_hap_selective_t %>%
+    filter(n_somatic_snv == 0)
+```
+
+# figure out where copy number changes are
+```{r}
+cn_states = cn %>% 
+    group_by(chrom,CN) %>%
+    bed_merge(
+        #max_dist=101e3
+        #max_dist=100e3,
+        max_dist=20e3,
+    ) %>%
+    # add a numeric group that increases when the CN column changes state
+    ungroup() %>%
+    arrange(chrom, start) %>%
+    group_by(chrom) %>%
+    mutate(
+        cn_change = CN != lag(CN),
+        cn_group = cumsum(replace_na(cn_change, FALSE)),
+    )  %>%
+    data.table
+
+cn_changes = cn_states %>%
+    filter(cn_change) %>%
+    mutate(
+        end = start + 1
+    )    
+cn_changes %>%
+    sample_n(10)
+```
+
+# test proximity of hap selective sites in somatic to CN changes
+```{r}
+other_peaks = bl_vs_t_dataset_filtered %>% filter(hap_diff_t_p_adjust > 0.05 & is_t_peak)
+
+tdf = bind_rows(
+    unique_hap_selective_t_no_somatic %>% 
+    filter(n_hap_snv == 0) %>%
+    mutate(
+        type="Hap-selective peaks\n(no somatic SNVs, HOM)"
+    ),
+    unique_hap_selective_t_no_somatic %>% 
+    filter(n_hap_snv > 0) %>%
+    mutate(
+        type="Hap-selective peaks\n(no somatic SNVs, HET)"
+    ),
+    #unique_hap_selective_t %>% filter(n_somatic_snv > 0) %>% mutate(type="hap_selective_t_with_somatic"),
+    other_peaks %>% mutate(type="Other peaks"),
+    other_peaks %>% bed_shuffle(genome=fai, seed=42) %>% mutate(type="Random genomic intervals"),
+    bl_vs_t_dataset_filtered %>% filter(is_bl_peak) %>% mutate(type="BL peaks"),
+    bl_vs_t_dataset_filtered %>% filter(is_bl_peak & hap_diff_bl_p_adjust <= 0.05) %>% mutate(type="Hap-selective BL peaks")
+
+) %>%
+    select(chrom, start, end, type, hap_diff_t) %>% unique()
+
+how_close_hsca_to_cn_changes = merge(
+    tdf,
+    tdf %>% bed_closest(cn_changes, suffix=c("", "_cn_change")),
+    all.x=TRUE,
+    by=c("chrom","start","end","type", "hap_diff_t")
+) %>%
+    mutate(
+        dist_to_cn = abs(.dist),
+        no_change_on_chrom = is.na(.dist)
+    ) %>%
+    replace_na(list(dist_to_cn=max(.$dist_to_cn+10e3, na.rm=TRUE)))
+
+```
+
+# plot as a cdf the distnace to nearest CN change for hap selective vs other peaks
+```{r}
+cur_colors = c(
+    "Hap-selective peaks\n(no somatic SNVs, HOM)"="darkred",
+    "Hap-selective peaks\n(no somatic SNVs, HET)"="red",
+    "Other peaks"="darkblue",
+    "BL peaks"="darkgreen",
+    "Hap-selective BL peaks"="forestgreen",
+    "Random genomic intervals"="darkgray"
+)
+table(how_close_hsca_to_cn_changes$type)
+how_close_hsca_to_cn_changes %>%
+    ggplot(aes(x=dist_to_cn+1, color=type)) +
+    stat_ecdf(alpha=0.75) +
+    scale_x_continuous(
+        "Distance to nearest copy number change",
+        label=comma,
+        #trans="log10",
+    ) +
+    #annotation_logticks(sides="b") +
+    scale_y_continuous(
+        "Cumulative % of haplotype-selective peaks",
+        label=percent
+    ) +
+    scale_color_manual(
+        "",
+        values=cur_colors
+    ) +
+    my_grid( )+
+    theme(
+        legend.position = "right",
+    ) 
+my_ggsave("Figures/CN-changes-vs-haplotype-accessibility-distance-to-closest.pdf", width=3, height=2)
+```
+
+# on the ECDF I want to measure the delta between the hap-selective no somatic peaks and the other peaks
+```{r}
+t_ecdf_df = how_close_hsca_to_cn_changes %>%
+    filter(type %in% c(
+        "Hap-selective peaks\n(no somatic SNVs, HOM)", 
+        "Hap-selective peaks\n(no somatic SNVs, HET)",
+        "Other peaks")) %>%
+    group_by(type) %>%
+    summarise(
+        x = seq(0, 20e6, by=1e3),
+        value = ecdf(dist_to_cn+1)(x)
+    ) %>% 
+    ungroup() 
+
+    #pivot_wider(names_from=type, values_from=value) %>%
+    #mutate(
+    #    delta = `Hap-selective peaks\n(no somatic SNVs)` - `Other peaks`
+    #)
+ecdf_df=t_ecdf_df %>%
+    filter(type!="Other peaks") %>%
+    merge(
+        t_ecdf_df %>% filter(type=="Other peaks") %>% select(x, other_value=value),
+        by="x",
+        all.x=TRUE
+    ) %>%
+    mutate(
+        delta = value - other_value
+    ) %>%
+    data.table()
+
+max_delta = ecdf_df %>%
+    group_by(type) %>%
+    filter(delta == max(delta, na.rm=TRUE)) 
+max_delta_dist = max_delta$x[which.max(max_delta$delta)]
+# now plot the delta
+ecdf_df %>%
+    ggplot(aes(x=x, y=delta, color=type)) +
+    geom_line() +
+    # label with the max delta 
+    geom_label_repel(
+        data=max_delta,
+        aes(
+            label=paste0("Max delta = ", round(delta*100,2), "% at ", x/1e6, " Mbp"),
+        ),
+        size=2,
+        segment.color=cur_colors[max_delta$type],
+        color="black",
+        min.segment.length = 0,
+        #nudge_x = 1e6,
+        nudge_y = 0.02,
+    ) +
+    scale_color_manual(
+        "",
+        values=cur_colors
+    ) +
+    scale_x_continuous(
+        "Distance to nearest copy number change",
+        label=comma,
+    ) +
+    scale_y_continuous(
+        "Difference in cumulative % of peaks\n(hap-selective - other)",
+        label=percent,
+    ) +
+    my_grid() +
+    theme()
+my_ggsave("Figures/CN-changes-vs-haplotype-accessibility-distance-to-closest-delta.pdf", width=3, height=2)
+```
+
+# save a table with these peaks
+```{r}
+hsca_close_to_cn_change = how_close_hsca_to_cn_changes %>%
+    filter(type == "Hap-selective peaks\n(no somatic SNVs, HOM)") %>%
+    select(-type) %>%
+    filter(dist_to_cn <= max_delta_dist) 
+
+hsca_close_to_cn_change %>%
+    rename(`#chrom`=chrom) %>%
+    fwrite("Tables/hap-selective-peaks-near-cn-changes.bed", sep="\t", quote=FALSE, row.names=FALSE, col.names=TRUE)
+# /mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/mrvollger/SMaHT-DSA-figures/Tables/hap-selective-peaks-near-cn-changes.bed
+```
+
+
+# make a ideogram showing me where these hap selective sites are
+```{r}
+how_close_hsca_to_cn_changes %>%
+    filter(type == "Hap-selective peaks\n(no somatic SNVs, HOM)") %>%
+    # color by postive or negative distance diff
+    mutate(
+        color = case_when(
+            hap_diff_t > 0 ~ "Hap 1 increase",
+            TRUE ~ "Hap 2 increase"
+        ),
+        hap = case_when(
+            grepl("haplotype1", chrom) ~ "Hap 1",
+            grepl("haplotype2", chrom) ~ "Hap 2",
+            TRUE ~ "Unknown"
+        )
+    ) %>% 
+    # merge with fai to get chromosome lengths
+    merge(
+        fai %>% select(chrom, size),
+        by="chrom",
+        all.x=TRUE
+    ) %>%
+    # organize chrom facets by size
+    mutate(
+        chrom = factor(chrom, levels=fai$chrom[order(fai$size, decreasing=TRUE)])
+    ) %>%
+    arrange(chrom, start) %>%
+    ggplot(aes(
+        x=(start+end)/2/1e6,
+        fill=color
+    )) +
+    geom_histogram(
+        binwidth=1,
+    ) +
+    geom_segment(
+        aes(y=0, yend=0, x=0, xend=size/1e6),
+    ) +
+    scale_fill_manual(
+        "",
+        values=c(
+            "Hap 1 increase"="darkred",
+            "Hap 2 increase"="darkblue"
+        )
+    ) +
+    facet_nested(hap+chrom~., 
+        space="free",
+        #scales="free_x"
+        switch="y"
+    ) +
+    scale_x_continuous(
+        "Genomic position (Mbp)",
+        label=comma,
+    ) +
+    scale_y_continuous(
+        "Count of haplotype-selective peaks\n(no somatic SNVs, HOM)",
+        expand=expansion(mult=c(0,0.1))
+    ) +
+    my_grid() +
+    #ggtitle("fake") +
+    theme(
+        strip.background = element_rect(fill="lightgray"),
+        strip.text = element_text(size=2),
+        legend.position = "top",
+    )
+my_ggsave("Figures/CN-changes-vs-haplotype-accessibility-hap-selective-peaks-ideogram.pdf", width=10, height=16)
+```
+
+```{r}
+# chrs = haplotype1−0000008 and haplotype1−0000026 are interesting I think, maybe also haplotype1−0000001
+keep_chrs = list("haplotype1-0000008", "haplotype1-0000026", "haplotype1-0000001")
+how_close_hsca_to_cn_changes %>%
+    filter(type == "Hap-selective peaks\n(no somatic SNVs, HOM)") %>%
+    filter(chrom %in% keep_chrs) %>%
+    arrange(chrom, start) %>%
+    group_by(chrom) %>%
+    mutate(
+        dist_to_cn_mbp = dist_to_cn/1e6,
+        dist_to_next_hap_sel = lead(start) - end,
+    ) %>%
+    select(chrom, start, end, hap_diff_t, dist_to_cn_mbp, dist_to_next_hap_sel) %>%
+    arrange(chrom, start) 
+    #pull(chrom) %>% table
+```

@@ -1,0 +1,943 @@
+---
+title: "Identifying SCNA using Circular Binary Segmentation (CBS) with DNAcopy"
+output: pdf_document
+editor:
+  render-on-save: false
+---
+
+```{r}
+suppressMessages(library(DNAcopy))
+suppressMessages(library(karyoploteR))
+suppressMessages(library(qpdf))
+suppressMessages(library(ggplot2))
+suppressMessages(library(dplyr))
+
+
+setwd("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV")
+
+dsa <- toGRanges("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/DSA/karyoploteR/DSA_COLO829BL_v3.0.0_sorted.txt")
+```
+
+```{r}
+subset_cbs <- function(cbs_result, target_contig) {
+  subset_segments <- cbs_result$output[cbs_result$output$chrom == target_contig, ]
+  
+  subset_data <- cbs_result$data[cbs_result$data$chrom == target_contig, ]
+  
+  new_cbs <- cbs_result
+  new_cbs$output <- subset_segments
+  new_cbs$data <- subset_data
+  
+  return(new_cbs)
+}
+
+
+bgziptabix <- function(file, preset = "bed", force = TRUE, keep_original = FALSE) {
+
+  if (!file.exists(file)) {
+    stop("File does not exist: ", file)
+  }
+  
+  bgzip_available <- system("which bgzip", ignore.stdout = TRUE, ignore.stderr = TRUE) == 0
+  tabix_available <- system("which tabix", ignore.stdout = TRUE, ignore.stderr = TRUE) == 0
+  
+  if (!bgzip_available) {
+    stop("bgzip is not available. Please install htslib/samtools. `mamba install bioconda::tabix`")
+  }
+  
+  if (!tabix_available) {
+    stop("tabix is not available. Please install htslib/samtools. `mamba install bioconda::tabix`")
+  }
+  
+  if (grepl("\\.gz$", file)) {
+    bgz_file <- file
+    cat("File is already compressed:", file, "\n")
+  } else {
+    bgz_file <- paste0(file, ".gz")
+    
+    bgzip_cmd <- paste("bgzip", 
+                       ifelse(force, "-f", ""), 
+                       ifelse(keep_original, "-c", ""), 
+                       file)
+    
+    if (keep_original) {
+      bgzip_cmd <- paste(bgzip_cmd, ">", bgz_file)
+    }
+    
+    cat("Running bgzip:", bgzip_cmd, "\n")
+    bgzip_result <- system(bgzip_cmd, ignore.stdout = FALSE, ignore.stderr = FALSE)
+    
+    if (bgzip_result != 0) {
+      stop("bgzip failed with exit code:", bgzip_result)
+    }
+    
+    cat("Successfully bgzipped:", bgz_file, "\n")
+  }
+  
+  tabix_cmd <- paste("tabix", "-f", "-p", preset, bgz_file)
+  
+  cat("Running tabix:", tabix_cmd, "\n")
+  tabix_result <- system(tabix_cmd, ignore.stdout = FALSE, ignore.stderr = FALSE)
+  
+  if (tabix_result != 0) {
+    stop("tabix failed with exit code:", tabix_result)
+  }
+  
+  index_file <- paste0(bgz_file, ".tbi")
+  cat("Successfully created tabix index:", index_file, "\n")
+  
+  return(list(
+    bgzip_file = bgz_file,
+    index_file = index_file,
+    success = TRUE
+  ))
+}
+
+```
+
+
+```{markdown}
+# Circular Binary Segmentation (CBS) for Callable 100kb log2 ratio data
+```
+```{r}
+setwd("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV")
+
+df_100kb <- read.table("merged_cov_callable_100kb_log2ratio.tsv", 
+                header = TRUE, 
+                sep = "\t", 
+                row.names = 1)
+
+df_100kb$log2_tb_bl_ratio_capped <- df_100kb$log2_tb_bl_ratio
+df_100kb$log2_tb_bl_ratio_capped[is.infinite(df_100kb$log2_tb_bl_ratio_capped) & 
+                           df_100kb$log2_tb_bl_ratio_capped < 0] <- -1.5
+df_100kb$log2_tb_bl_ratio_capped[df_100kb$log2_tb_bl_ratio_capped < -1.5] <- -1.5
+
+summary(df_100kb$log2_tb_bl_ratio_capped)
+table(is.infinite(df_100kb$log2_tb_bl_ratio_capped))
+
+
+df_100kb$chromosome <- sub(":.*", "", rownames(df_100kb))
+df_100kb$start <- as.numeric(sub(".*:(\\d+)-\\d+", "\\1", rownames(df_100kb)))
+df_100kb$end <- as.numeric(sub(".*:\\d+-(\\d+)", "\\1", rownames(df_100kb)))
+df_100kb$position <- (df_100kb$start + df_100kb$end) / 2
+
+contigs <- as.character(seqnames(dsa))
+
+df_100kb$chromosome <- factor(df_100kb$chromosome, levels = contigs) # NOTE: sort by contig length (descending order)
+df_100kb <- df_100kb[order(df_100kb$chromosome, df_100kb$start), ]
+
+cna_object_100kb <- CNA(genomdat = df_100kb$log2_tb_bl_ratio_capped,
+                        chrom = df_100kb$chromosome,
+                        maploc = df_100kb$position,
+                        data.type = "logratio",
+                        sampleid = "COLO829")
+
+smoothed_cna_100kb <- smooth.CNA(cna_object_100kb, 
+                                 smooth.region=10, 
+                                 outlier.SD.scale=4, 
+                                 smooth.SD.scale=25, 
+                                 trim=0.025)
+
+cbs_result_100kb <- segment(smoothed_cna_100kb, 
+                      verbose = 1,
+                      min.width = 5,
+                      nperm = 10000,
+                      alpha = 0.0001)
+```
+
+```{r}
+plot_dir <- "/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/Plots"
+
+pdf(file.path(plot_dir, "log2ratio_TN.pdf"), width=60, height=30)
+options(repr.plot.width = 60, repr.plot.height = 30)
+par(bg="white", family="ArialMT")
+
+plot(cbs_result_100kb, 
+     plot.type = "whole", 
+     ylim=c(-2, 2.5))
+
+abline(h = seq(-2, 2.5, by = 0.5), col = "black", lty = 1, lwd = 0.8)
+axis(2, at = seq(-2, 2.5, by = 0.5), las = 1)
+
+title(
+      font.main = 2, 
+      line = 3, 
+      ylab = "Log2 Copy Number Ratio (Tumor/Normal)", 
+      cex.lab = 1.2)
+dev.off()
+system(paste("code -r", file.path(plot_dir, "log2ratio_TN.pdf")))
+```
+
+```{r}
+for (contig in contigs) {
+ 
+  if (!contig %in% unique(cbs_result_100kb$output$chrom)) {
+    cat("Skipping", contig, "- not found in CBS result\n")
+    next
+  }
+
+  filename <- paste0("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/CBS_Plot_Callable_100kb/Log2ratio_plot_", contig, ".pdf")
+  
+  pdf(filename, width = 50, height = 20)
+
+  options(repr.plot.width = 50, repr.plot.height = 20)
+  par(bg="white", family="ArialMT")
+  
+  cbs_sub <- subset_cbs(cbs_result_100kb, contig)
+
+  plot(cbs_sub, 
+       plot.type = "w", 
+       zlcol="black",
+       ylim=c(-2, 2.5))
+
+  abline(h = seq(-2, 2.5, by = 0.25), col = "black", lty = 1, lwd = 0.8)
+  axis(2, at = seq(-2, 2.5, by = 0.25), las = 1)
+
+  title(main = contig,
+        cex.main = 1.5, 
+        font.main = 2, 
+        line = 3, 
+        ylab = "Log2 Copy Number Ratio (Tumor/Normal)", 
+        cex.lab = 1.2)
+
+  dev.off()
+
+  cat("Completed plot for", contig, "\n")
+}
+
+pdf_files <- list.files(
+  path = "/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/CBS_Plot_Callable_100kb/",
+  pattern = "Log2ratio_plot_haplotype.*\\.pdf$",
+  full.names = TRUE
+)
+
+pdf_files <- sort(pdf_files)
+
+merged_filename <- "/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/CBS_Plot_Callable_100kb/Log2ratio_plot_Callable_100kb_merged.pdf"
+
+pdf_combine(input = pdf_files, output = merged_filename)
+
+cat("Merged PDF created:", merged_filename, "\n")
+
+file.remove(pdf_files)
+
+system(paste("code -r", merged_filename))
+```
+
+
+```{r}
+merge_cbs_with_df <- function(df_100kb, cbs_result_100kb) {
+  unique_chroms <- unique(cbs_result_100kb$output$chrom)
+  
+  seg_data_list <- list()
+  
+  for (chrom in unique_chroms) {
+    chrom_subset <- subset(cbs_result_100kb, chromlist = chrom)
+    
+    chrom_seg_summary <- segments.summary(chrom_subset)
+    
+    seg_data_list[[chrom]] <- chrom_seg_summary
+  }
+  
+  seg_data <- do.call(rbind, seg_data_list)
+  
+  rownames(seg_data) <- NULL
+  
+  df_100kb$num.mark <- NA
+  df_100kb$seg.mean <- NA
+  df_100kb$seg.median <- NA
+  
+  for (i in 1:nrow(df_100kb)) {
+    current_chrom <- df_100kb$chromosome[i]
+    current_pos <- df_100kb$position[i]
+    
+    matching_segment <- which(
+      seg_data$chrom == current_chrom &
+      seg_data$loc.start <= current_pos &
+      seg_data$loc.end >= current_pos
+    )
+    
+    if (length(matching_segment) > 0) {
+      if (length(matching_segment) > 1) {
+        matching_segment <- matching_segment[1]
+        warning(paste("Multiple segments found for position", current_pos, "on", current_chrom))
+      }
+      
+      df_100kb$num.mark[i] <- seg_data$num.mark[matching_segment]
+      df_100kb$seg.mean[i] <- seg_data$seg.mean[matching_segment]
+      df_100kb$seg.median[i] <- seg_data$seg.median[matching_segment]
+    } else {
+      warning(paste("No segment found for position", current_pos, "on", current_chrom))
+    }
+  }
+  
+  return(df_100kb)
+}
+
+df_100kb_with_segments <- merge_cbs_with_df(df_100kb, cbs_result_100kb)
+
+df_100kb_with_segments <- df_100kb_with_segments[!is.na(df_100kb_with_segments[, "seg.median"]), ]
+
+breakpoints <- log2((0:4 + 0.5) / 1) # NOTE: -1 0.5849625 1.321928 1.807355 2.169925  
+
+df_100kb_with_segments <- df_100kb_with_segments %>%
+  mutate(
+    CN = case_when(
+      seg.median <= breakpoints[1] ~ "DEL",
+      seg.median <= breakpoints[2] ~ "CN1",
+      seg.median <= breakpoints[3] ~ "CN2",
+      seg.median <= breakpoints[4] ~ "CN3",
+      seg.median <= breakpoints[5] ~ "CN4",
+      TRUE ~ ">CN4"  # INFO: Everything else (seg.mean > breakpoints[5])
+    )
+  )
+
+df_100kb_with_segments$manual.curation <- FALSE
+manual_update_rows1 <- df_100kb_with_segments$chromosome == "haplotype2-0000059" & 
+                        df_100kb_with_segments$CN != "DEL"
+df_100kb_with_segments$CN[manual_update_rows1] <- "DEL"
+df_100kb_with_segments$manual.curation[manual_update_rows1] <- TRUE
+
+manual_update_rows2 <- df_100kb_with_segments$chromosome == "haplotype2-0000068" & 
+                        df_100kb_with_segments$end < 53000000 & 
+                        df_100kb_with_segments$CN != "DEL"
+df_100kb_with_segments$CN[manual_update_rows2] <- "DEL"
+df_100kb_with_segments$manual.curation[manual_update_rows2] <- TRUE
+
+manual_update_rows3 <- df_100kb_with_segments$chromosome == "haplotype2-0000070" & 
+                        df_100kb_with_segments$start > 10000000 & 
+                        df_100kb_with_segments$CN != "DEL"
+df_100kb_with_segments$CN[manual_update_rows3] <- "DEL"
+df_100kb_with_segments$manual.curation[manual_update_rows3] <- TRUE
+
+other_cols <- setdiff(colnames(df_100kb_with_segments), c("chromosome", "start", "end", "CN"))
+new_col_order <- c("chromosome", "start", "end", "CN", other_cols)
+df_100kb_with_segments <- df_100kb_with_segments[, new_col_order]
+
+contigs_sorted <- sort(contigs)
+df_100kb_with_segments$chromosome <- factor(df_100kb_with_segments$chromosome, 
+                                            levels = contigs_sorted)
+
+df_100kb_with_segments <- df_100kb_with_segments[order(df_100kb_with_segments$chromosome, 
+                                                        df_100kb_with_segments$start), ]
+
+colnames(df_100kb_with_segments)[colnames(df_100kb_with_segments) == "chromosome"] <- "#chromosome"
+
+# INFO: BED file with all the information about each segment 
+old_options <- options()
+options(scipen = 999) # INFO: Disable exponential notation (e+) for indexing
+write.table(df_100kb_with_segments,
+            file = "merged_cov_callable_100kb_log2ratio_CBS_wCN.bed", 
+            sep = "\t", 
+            row.names = FALSE, 
+            quote = FALSE)
+options(old_options)
+
+bgziptabix("merged_cov_callable_100kb_log2ratio_CBS_wCN.bed")
+
+# INFO: BED file with all the information about each segment 
+options(scipen = 999) # INFO: Disable exponential notation (e+) for indexing
+write.table(df_100kb_with_segments[1:4], 
+            file = "merged_cov_callable_100kb_log2ratio_CBS_wCN_simple.bed", 
+            sep = "\t", 
+            col.names = FALSE,
+            row.names = FALSE, 
+            quote = FALSE)
+options(old_options)
+
+bgziptabix("merged_cov_callable_100kb_log2ratio_CBS_wCN_simple.bed")
+
+```
+
+```{markdown}
+# INFO: HP1-HP2: Circular Binary Segmentation (CBS) for 100kb log2 ratio data
+```
+```{r}
+setwd("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/HP1_HP2_SCNA")
+
+df_100kb_hp1_hp2 <- read.table("merged_cov_callable_100kb_hp1-hp2_log2ratio.tsv", 
+                header = TRUE, 
+                sep = "\t", 
+                row.names = 1)
+
+df_100kb_hp1_hp2$log2_tb_bl_ratio_capped <- df_100kb_hp1_hp2$log2_tb_bl_ratio
+df_100kb_hp1_hp2$log2_tb_bl_ratio_capped[is.infinite(df_100kb_hp1_hp2$log2_tb_bl_ratio_capped) & 
+                           df_100kb_hp1_hp2$log2_tb_bl_ratio_capped < 0] <- -1.5
+df_100kb_hp1_hp2$log2_tb_bl_ratio_capped[df_100kb_hp1_hp2$log2_tb_bl_ratio_capped < -1.5] <- -1.5
+
+df_100kb_hp1_hp2$log2_tb_bl_ratio_capped[is.infinite(df_100kb_hp1_hp2$log2_tb_bl_ratio_capped) & 
+                           df_100kb_hp1_hp2$log2_tb_bl_ratio_capped > 0] <- 2.5
+df_100kb_hp1_hp2$log2_tb_bl_ratio_capped[df_100kb_hp1_hp2$log2_tb_bl_ratio_capped > 2.5] <- 2.5
+
+summary(df_100kb_hp1_hp2$log2_tb_bl_ratio_capped)
+table(is.infinite(df_100kb_hp1_hp2$log2_tb_bl_ratio_capped))
+
+
+df_100kb_hp1_hp2$chromosome <- sub(":.*", "", rownames(df_100kb_hp1_hp2))
+df_100kb_hp1_hp2$start <- as.numeric(sub(".*:(\\d+)-\\d+", "\\1", rownames(df_100kb_hp1_hp2)))
+df_100kb_hp1_hp2$end <- as.numeric(sub(".*:\\d+-(\\d+)", "\\1", rownames(df_100kb_hp1_hp2)))
+df_100kb_hp1_hp2$position <- (df_100kb_hp1_hp2$start + df_100kb_hp1_hp2$end) / 2
+
+contigs <- as.character(seqnames(dsa))
+
+df_100kb_hp1_hp2$chromosome <- factor(df_100kb_hp1_hp2$chromosome, levels = contigs) # NOTE: sort by contig length (descending order)
+df_100kb_hp1_hp2 <- df_100kb_hp1_hp2[order(df_100kb_hp1_hp2$chromosome, df_100kb_hp1_hp2$start), ]
+
+cna_object_100kb_hp1_hp2 <- CNA(genomdat = df_100kb_hp1_hp2$log2_tb_bl_ratio_capped,
+                                chrom = df_100kb_hp1_hp2$chromosome,
+                                maploc = df_100kb_hp1_hp2$position,
+                                data.type = "logratio",
+                                sampleid = "COLO829")
+
+smoothed_cna_100kb_hp1_hp2 <- smooth.CNA(cna_object_100kb_hp1_hp2, 
+                                         smooth.region=10, 
+                                         outlier.SD.scale=4, 
+                                         smooth.SD.scale=25, 
+                                         trim=0.025)
+
+cbs_result_100kb_hp1_hp2 <- segment(smoothed_cna_100kb_hp1_hp2, 
+                                    verbose = 1,
+                                    min.width = 5,
+                                    nperm = 10000,
+                                    alpha = 0.0001)
+```
+
+```{r}
+plot_dir <- "/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/HP1_HP2_SCNA/Plots"
+
+pdf(file.path(plot_dir, "log2ratio_TN_HP1-HP2.pdf"), width=60, height=30)
+options(repr.plot.width = 60, repr.plot.height = 30)
+par(bg="white", family="ArialMT")
+
+plot(cbs_result_100kb_hp1_hp2, 
+     plot.type = "whole", 
+     ylim=c(-2, 2.5))
+
+abline(h = seq(-2, 2.5, by = 0.5), col = "black", lty = 1, lwd = 0.8)
+axis(2, at = seq(-2, 2.5, by = 0.5), las = 1)
+
+title(
+      font.main = 2, 
+      line = 3, 
+      ylab = "Log2 Copy Number Ratio (Tumor/Normal)", 
+      cex.lab = 1.2)
+dev.off()
+system(paste("code -r", file.path(plot_dir, "log2ratio_TN_HP1-HP2.pdf")))
+```
+
+```{r}
+for (contig in contigs) {
+ 
+  if (!contig %in% unique(cbs_result_100kb_hp1_hp2$output$chrom)) {
+    cat("Skipping", contig, "- not found in CBS result\n")
+    next
+  }
+
+  filename <- paste0(plot_dir, "/Log2ratio_plot_", contig, ".pdf")
+  
+  pdf(filename, width = 50, height = 20)
+
+  options(repr.plot.width = 50, repr.plot.height = 20)
+  par(bg="white", family="ArialMT")
+
+  cbs_sub <- subset_cbs(cbs_result_100kb_hp1_hp2, contig)
+
+  plot(cbs_sub, 
+       plot.type = "w", 
+       zlcol="black",
+       ylim=c(-2, 2.5))
+
+  abline(h = seq(-2, 2.5, by = 0.25), col = "black", lty = 1, lwd = 0.8)
+  axis(2, at = seq(-2, 2.5, by = 0.25), las = 1)
+
+  title(main = contig,
+        cex.main = 1.5, 
+        font.main = 2, 
+        line = 3, 
+        ylab = "Log2 Copy Number Ratio (Tumor/Normal)", 
+        cex.lab = 1.2)
+
+  dev.off()
+
+  cat("Completed plot for", contig, "\n")
+}
+
+pdf_files <- list.files(
+  path = plot_dir,
+  pattern = "Log2ratio_plot_haplotype.*\\.pdf$",
+  full.names = TRUE
+)
+
+pdf_files <- sort(pdf_files)
+
+merged_filename <- paste0(plot_dir, "/Log2ratio_plot_Callable_100kb_merged_HP1-HP2.pdf")
+
+pdf_combine(input = pdf_files, output = merged_filename)
+
+cat("Merged PDF created:", merged_filename, "\n")
+
+file.remove(pdf_files)
+
+system(paste("code -r", merged_filename))
+```
+
+```{r}
+merge_cbs_with_df <- function(df_100kb, cbs_result_100kb) {
+  unique_chroms <- unique(cbs_result_100kb$output$chrom)
+  
+  seg_data_list <- list()
+  
+  for (chrom in unique_chroms) {
+    chrom_subset <- subset(cbs_result_100kb, chromlist = chrom)
+    
+    chrom_seg_summary <- segments.summary(chrom_subset)
+    
+    seg_data_list[[chrom]] <- chrom_seg_summary
+  }
+  
+  seg_data <- do.call(rbind, seg_data_list)
+  
+  rownames(seg_data) <- NULL
+  
+  df_100kb$num.mark <- NA
+  df_100kb$seg.mean <- NA
+  df_100kb$seg.median <- NA
+  
+  for (i in 1:nrow(df_100kb)) {
+    current_chrom <- df_100kb$chromosome[i]
+    current_pos <- df_100kb$position[i]
+    
+    matching_segment <- which(
+      seg_data$chrom == current_chrom &
+      seg_data$loc.start <= current_pos &
+      seg_data$loc.end >= current_pos
+    )
+    
+    if (length(matching_segment) > 0) {
+      if (length(matching_segment) > 1) {
+        matching_segment <- matching_segment[1]
+        warning(paste("Multiple segments found for position", current_pos, "on", current_chrom))
+      }
+      
+      df_100kb$num.mark[i] <- seg_data$num.mark[matching_segment]
+      df_100kb$seg.mean[i] <- seg_data$seg.mean[matching_segment]
+      df_100kb$seg.median[i] <- seg_data$seg.median[matching_segment]
+    } else {
+      warning(paste("No segment found for position", current_pos, "on", current_chrom))
+    }
+  }
+  
+  return(df_100kb)
+}
+
+df_100kb_hp1_hp2_with_segments <- merge_cbs_with_df(df_100kb_hp1_hp2, cbs_result_100kb_hp1_hp2)
+
+df_100kb_hp1_hp2_with_segments <- df_100kb_hp1_hp2_with_segments[!is.na(df_100kb_hp1_hp2_with_segments[, "seg.median"]), ]
+
+breakpoints <- log2((0:4 + 0.5) / 1) # NOTE: -1 0.5849625 1.321928 1.807355 2.169925  
+
+df_100kb_hp1_hp2_with_segments <- df_100kb_hp1_hp2_with_segments %>%
+  mutate(
+    CN = case_when(
+      seg.median <= breakpoints[1] ~ "DEL",
+      seg.median <= breakpoints[2] ~ "CN1",
+      seg.median <= breakpoints[3] ~ "CN2",
+      seg.median <= breakpoints[4] ~ "CN3",
+      seg.median <= breakpoints[5] ~ "CN4",
+      TRUE ~ ">CN4"  # INFO: Everything else (seg.mean > breakpoints[5])
+    )
+  )
+
+# NOTE: Manual curation of segments
+# NOTE: contig corresponds to haplotype2-0000059
+df_100kb_hp1_hp2_with_segments$manual.curation <- FALSE
+manual_update_rows1 <- df_100kb_hp1_hp2_with_segments$chromosome == "haplotype1-0000012" & 
+                        df_100kb_hp1_hp2_with_segments$CN != "DEL"
+df_100kb_hp1_hp2_with_segments$CN[manual_update_rows1] <- "DEL"
+df_100kb_hp1_hp2_with_segments$manual.curation[manual_update_rows1] <- TRUE
+
+# NOTE: contig corresponds to haplotype2-0000068 => Not applicable for HP1-HP2
+
+# NOTE: contig corresponds to haplotype2-0000070
+manual_update_rows2 <- df_100kb_hp1_hp2_with_segments$chromosome == "haplotype1-0000018" & 
+                        df_100kb_hp1_hp2_with_segments$start > 10000000 & 
+                        df_100kb_hp1_hp2_with_segments$CN != "DEL"
+df_100kb_hp1_hp2_with_segments$CN[manual_update_rows2] <- "DEL"
+df_100kb_hp1_hp2_with_segments$manual.curation[manual_update_rows2] <- TRUE
+
+other_cols <- setdiff(colnames(df_100kb_hp1_hp2_with_segments), c("chromosome", "start", "end", "CN"))
+new_col_order <- c("chromosome", "start", "end", "CN", other_cols)
+df_100kb_hp1_hp2_with_segments <- df_100kb_hp1_hp2_with_segments[, new_col_order]
+
+contigs_sorted <- sort(contigs)
+df_100kb_hp1_hp2_with_segments$chromosome <- factor(df_100kb_hp1_hp2_with_segments$chromosome, 
+                                            levels = contigs_sorted)
+
+df_100kb_hp1_hp2_with_segments <- df_100kb_hp1_hp2_with_segments[order(df_100kb_hp1_hp2_with_segments$chromosome, 
+                                                        df_100kb_hp1_hp2_with_segments$start), ]
+
+df_100kb_hp1_hp2_with_segments$CN[is.na(df_100kb_hp1_hp2_with_segments$tb_bl_ratio)] <- NA
+
+colnames(df_100kb_hp1_hp2_with_segments)[colnames(df_100kb_hp1_hp2_with_segments) == "chromosome"] <- "#chromosome"
+
+# INFO: BED file with all the information about each segment 
+old_options <- options()
+options(scipen = 999) # INFO: Disable exponential notation (e+) for indexing
+write.table(df_100kb_hp1_hp2_with_segments,
+            file = "merged_cov_callable_100kb_hp1-hp2_log2ratio_CBS_wCN.bed", 
+            sep = "\t", 
+            row.names = FALSE, 
+            quote = FALSE)
+options(old_options)
+
+bgziptabix("merged_cov_callable_100kb_hp1-hp2_log2ratio_CBS_wCN.bed")
+
+# INFO: BED file with all the information about each segment 
+options(scipen = 999) # INFO: Disable exponential notation (e+) for indexing
+write.table(df_100kb_hp1_hp2_with_segments[1:4], 
+            file = "merged_cov_callable_100kb_hp1-hp2_log2ratio_CBS_wCN_simple.bed", 
+            sep = "\t", 
+            col.names = FALSE,
+            row.names = FALSE,
+            quote = FALSE)
+options(old_options)
+
+bgziptabix("merged_cov_callable_100kb_hp1-hp2_log2ratio_CBS_wCN_simple.bed")
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+test <- subset_cbs(cbs_result_100kb, "haplotype1-0000001")
+```
+
+```{markdown}
+# Circular Binary Segmentation (CBS) for 1kb log2 ratio data
+```
+```{r}
+setwd("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV")
+
+df_1kb <- read.table("merged_cov_callable_1kb_log2ratio.tsv", 
+                header = TRUE, 
+                sep = "\t", 
+                row.names = 1)
+
+df_1kb$log2_tb_bl_ratio_capped <- df_1kb$log2_tb_bl_ratio
+df_1kb$log2_tb_bl_ratio_capped[is.infinite(df_1kb$log2_tb_bl_ratio_capped) & 
+                           df_1kb$log2_tb_bl_ratio_capped < 0] <- -1.5
+df_1kb$log2_tb_bl_ratio_capped[df_1kb$log2_tb_bl_ratio_capped < -1.5] <- -1.5
+
+summary(df_1kb$log2_tb_bl_ratio_capped)
+table(is.infinite(df_1kb$log2_tb_bl_ratio_capped))
+
+
+df_1kb$chromosome <- sub(":.*", "", rownames(df_1kb))
+df_1kb$start <- as.numeric(sub(".*:(\\d+)-\\d+", "\\1", rownames(df_1kb)))
+df_1kb$end <- as.numeric(sub(".*:\\d+-(\\d+)", "\\1", rownames(df_1kb)))
+df_1kb$position <- (df_1kb$start + df_1kb$end) / 2
+
+contigs <- as.character(seqnames(dsa))
+
+df_1kb$chromosome <- factor(df_1kb$chromosome, levels = contigs) # NOTE: sort by contig length (descending order)
+df_1kb <- df_1kb[order(df_1kb$chromosome, df_1kb$start), ]
+
+cna_object_1kb <- CNA(genomdat = df_1kb$log2_tb_bl_ratio_capped,
+                        chrom = df_1kb$chromosome,
+                        maploc = df_1kb$position,
+                        data.type = "logratio",
+                        sampleid = "COLO829")
+
+smoothed_cna_1kb <- smooth.CNA(cna_object_1kb, 
+                                 smooth.region=10, 
+                                 outlier.SD.scale=4, 
+                                 smooth.SD.scale=25, 
+                                 trim=0.025)
+
+cbs_result_1kb <- segment(smoothed_cna_1kb, 
+                      verbose = 1,
+                      min.width = 5,
+                      nperm = 10000,
+                      alpha = 0.0001)
+```
+
+```{r}
+plot_dir <- "/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/Plots"
+
+pdf(file.path(plot_dir, "log2ratio_TN.pdf"), width=60, height=30)
+options(repr.plot.width = 60, repr.plot.height = 30)
+par(bg="white", family="ArialMT")
+
+plot(cbs_result_100kb, 
+     plot.type = "whole", 
+     ylim=c(-2, 2.5))
+
+abline(h = seq(-2, 2.5, by = 0.5), col = "black", lty = 1, lwd = 0.8)
+axis(2, at = seq(-2, 2.5, by = 0.5), las = 1)
+
+title(
+      font.main = 2, 
+      line = 3, 
+      ylab = "Log2 Copy Number Ratio (Tumor/Normal)", 
+      cex.lab = 1.2)
+dev.off()
+system(paste("code -r", file.path(plot_dir, "log2ratio_TN.pdf")))
+```
+
+```{r}
+for (contig in contigs) {
+ 
+  if (!contig %in% unique(cbs_result_1kb$output$chrom)) {
+    cat("Skipping", contig, "- not found in CBS result\n")
+    next
+  }
+
+  filename <- paste0("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/CBS_Plot_Callable_1kb/Log2ratio_plot_", contig, ".pdf")
+  
+  pdf(filename, width = 50, height = 20)
+
+  options(repr.plot.width = 50, repr.plot.height = 20)
+  par(bg="white", family="ArialMT")
+  
+  cbs_sub <- subset_cbs(cbs_result_1kb, contig)
+
+  plot(cbs_sub, 
+       plot.type = "w", 
+       zlcol="black",
+       ylim=c(-2, 2.5))
+
+  abline(h = seq(-2, 2.5, by = 0.25), col = "black", lty = 1, lwd = 0.8)
+  axis(2, at = seq(-2, 2.5, by = 0.25), las = 1)
+
+  title(main = contig,
+        cex.main = 1.5, 
+        font.main = 2, 
+        line = 3, 
+        ylab = "Log2 Copy Number Ratio (Tumor/Normal)", 
+        cex.lab = 1.2)
+
+  dev.off()
+
+  cat("Completed plot for", contig, "\n")
+}
+
+pdf_files <- list.files(
+  path = "/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/CBS_Plot_Callable_1kb/",
+  pattern = "Log2ratio_plot_haplotype.*\\.pdf$",
+  full.names = TRUE
+)
+
+pdf_files <- sort(pdf_files)
+
+merged_filename <- "/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/Fiber-seq/Structural_Variations/Simple_Segment-based_CNV/CBS_Plot_Callable_1kb/Log2ratio_plot_Callable_1kb_merged.pdf"
+
+pdf_combine(input = pdf_files, output = merged_filename)
+
+cat("Merged PDF created:", merged_filename, "\n")
+
+file.remove(pdf_files)
+```
+
+
+```{r}
+merge_cbs_with_df <- function(df_1kb, cbs_result_1kb) {
+  unique_chroms <- unique(cbs_result_1kb$output$chrom)
+  
+  seg_data_list <- list()
+  
+  for (chrom in unique_chroms) {
+    chrom_subset <- subset(cbs_result_1kb, chromlist = chrom)
+    
+    chrom_seg_summary <- segments.summary(chrom_subset)
+    
+    seg_data_list[[chrom]] <- chrom_seg_summary
+  }
+  
+  seg_data <- do.call(rbind, seg_data_list)
+  
+  rownames(seg_data) <- NULL
+
+  df_1kb$num.mark <- NA
+  df_1kb$seg.mean <- NA
+  df_1kb$seg.median <- NA
+
+  for (i in 1:nrow(df_1kb)) {
+    current_chrom <- df_1kb$chromosome[i]
+    current_pos <- df_1kb$position[i]
+    
+    matching_segment <- which(
+      seg_data$chrom == current_chrom &
+      seg_data$loc.start <= current_pos &
+      seg_data$loc.end >= current_pos
+    )
+    
+    if (length(matching_segment) > 0) {
+      if (length(matching_segment) > 1) {
+        matching_segment <- matching_segment[1]
+        warning(paste("Multiple segments found for position", current_pos, "on", current_chrom))
+      }
+
+      df_1kb$num.mark[i] <- seg_data$num.mark[matching_segment]
+      df_1kb$seg.mean[i] <- seg_data$seg.mean[matching_segment]
+      df_1kb$seg.median[i] <- seg_data$seg.median[matching_segment]
+    } else {
+      warning(paste("No segment found for position", current_pos, "on", current_chrom))
+    }
+  }
+
+  return(df_1kb)
+}
+
+df_1kb_with_segments <- merge_cbs_with_df(df_1kb, cbs_result_1kb)
+
+df_1kb_with_segments <- df_1kb_with_segments[!is.na(df_1kb_with_segments[, "seg.median"]), ]
+
+breakpoints <- log2((0:4 + 0.5) / 1) # NOTE: -1 0.5849625 1.321928 1.807355 2.169925  
+
+df_1kb_with_segments <- df_1kb_with_segments %>%
+  mutate(
+    CN = case_when(
+      seg.median <= breakpoints[1] ~ "DEL",
+      seg.median <= breakpoints[2] ~ "CN1",
+      seg.median <= breakpoints[3] ~ "CN2",
+      seg.median <= breakpoints[4] ~ "CN3",
+      seg.median <= breakpoints[5] ~ "CN4",
+      TRUE ~ ">CN4"  # INFO: Everything else (seg.mean > breakpoints[5])
+    )
+  )
+```
+
+```{r}
+merge_cbs_with_df <- function(df_1kb, cbs_result_1kb) {
+  unique_chroms <- unique(cbs_result_1kb$output$chrom)
+  
+  df_1kb$num.mark <- NA_real_
+  df_1kb$seg.mean <- NA_real_
+  df_1kb$seg.median <- NA_real_
+  
+  # Process each chromosome separately (required due to DNAcopy bug)
+  for (chrom in unique_chroms) {
+    # Subset CBS result for this chromosome
+    chrom_subset <- subset(cbs_result_1kb, chromlist = chrom)
+    chrom_seg_summary <- segments.summary(chrom_subset)
+    
+    # Get all positions for this chromosome from df_1kb
+    chrom_positions_idx <- which(df_1kb$chromosome == chrom)
+    
+    if (length(chrom_positions_idx) == 0) {
+      next
+    }
+    
+    positions <- df_1kb$position[chrom_positions_idx]
+    
+    # Sort segments by start position for potential optimization
+    seg_order <- order(chrom_seg_summary$loc.start)
+    chrom_seg_summary <- chrom_seg_summary[seg_order, , drop = FALSE]
+    
+    # Vectorized approach: for each position, find matching segment
+    # Use outer comparison to create a matrix of matches
+    start_matrix <- outer(positions, chrom_seg_summary$loc.start, ">=")
+    end_matrix <- outer(positions, chrom_seg_summary$loc.end, "<=")
+    match_matrix <- start_matrix & end_matrix
+    
+    # For each position, find the first matching segment
+    for (i in seq_along(positions)) {
+      matching_segments <- which(match_matrix[i, ])
+      
+      if (length(matching_segments) > 0) {
+        if (length(matching_segments) > 1) {
+          matching_segments <- matching_segments[1]
+          warning(paste("Multiple segments found for position", positions[i], "on", chrom))
+        }
+        
+        df_idx <- chrom_positions_idx[i]
+        df_1kb$num.mark[df_idx] <- chrom_seg_summary$num.mark[matching_segments]
+        df_1kb$seg.mean[df_idx] <- chrom_seg_summary$seg.mean[matching_segments]
+        df_1kb$seg.median[df_idx] <- chrom_seg_summary$seg.median[matching_segments]
+      } else {
+        warning(paste("No segment found for position", positions[i], "on", chrom))
+      }
+    }
+  }
+  
+  return(df_1kb)
+}
+
+df_1kb_with_segments <- merge_cbs_with_df(df_1kb, cbs_result_1kb)
+
+df_1kb_with_segments <- df_1kb_with_segments[!is.na(df_1kb_with_segments[, "seg.median"]), ]
+
+breakpoints <- log2((0:4 + 0.5) / 1) # NOTE: -1 0.5849625 1.321928 1.807355 2.169925  
+
+df_1kb_with_segments <- df_1kb_with_segments %>%
+  mutate(
+    CN = case_when(
+      seg.median <= breakpoints[1] ~ "DEL",
+      seg.median <= breakpoints[2] ~ "CN1",
+      seg.median <= breakpoints[3] ~ "CN2",
+      seg.median <= breakpoints[4] ~ "CN3",
+      seg.median <= breakpoints[5] ~ "CN4",
+      TRUE ~ ">CN4"  # INFO: Everything else (seg.mean > breakpoints[5])
+    )
+  )
+```
+
+
+
+```{r}
+df_1kb_with_segments$manual.curation <- FALSE
+manual_update_rows1 <- df_1kb_with_segments$chromosome == "haplotype2-0000059" & 
+                        df_1kb_with_segments$CN != "DEL"
+df_1kb_with_segments$CN[manual_update_rows1] <- "DEL"
+df_1kb_with_segments$manual.curation[manual_update_rows1] <- TRUE
+
+manual_update_rows2 <- df_1kb_with_segments$chromosome == "haplotype2-0000068" & 
+                        df_1kb_with_segments$end < 10000000 & 
+                        df_1kb_with_segments$CN != "DEL"
+df_1kb_with_segments$CN[manual_update_rows2] <- "DEL"
+df_1kb_with_segments$manual.curation[manual_update_rows2] <- TRUE
+
+other_cols <- setdiff(colnames(df_1kb_with_segments), c("chromosome", "start", "end", "CN"))
+new_col_order <- c("chromosome", "start", "end", "CN", other_cols)
+df_1kb_with_segments <- df_1kb_with_segments[, new_col_order]
+
+contigs_sorted <- sort(contigs)
+df_1kb_with_segments$chromosome <- factor(df_1kb_with_segments$chromosome, 
+                                            levels = contigs_sorted)
+
+df_1kb_with_segments <- df_1kb_with_segments[order(df_1kb_with_segments$chromosome, 
+                                                        df_1kb_with_segments$start), ]
+
+colnames(df_1kb_with_segments)[colnames(df_1kb_with_segments) == "chromosome"] <- "#chromosome"
+
+# INFO: BED file with all the information about each segment 
+old_options <- options()
+options(scipen = 999) # INFO: Disable exponential notation (e+) for indexing
+write.table(df_1kb_with_segments,
+            file = "merged_cov_callable_1kb_log2ratio_CBS_wCN.bed", 
+            sep = "\t", 
+            row.names = FALSE, 
+            quote = FALSE)
+options(old_options)
+
+bgziptabix("merged_cov_callable_1kb_log2ratio_CBS_wCN.bed")
+
+# INFO: BED file with all the information about each segment 
+options(scipen = 999) # INFO: Disable exponential notation (e+) for indexing
+write.table(df_100kb_with_segments[1:4], 
+            file = "merged_cov_callable_1kb_log2ratio_CBS_wCN_simple.bed", 
+            sep = "\t", 
+            col.names = FALSE,
+            row.names = FALSE, 
+            quote = FALSE)
+options(old_options)
+
+bgziptabix("merged_cov_callable_1kb_log2ratio_CBS_wCN_simple.bed")
+
+```
