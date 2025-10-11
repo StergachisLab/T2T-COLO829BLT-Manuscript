@@ -24,15 +24,15 @@ Code used in analysis/figure generation as part of the T2T COLO829BLT manuscript
 RepeatMasker, Tandem Repeat Finder (TRF) and DupMasker
 Rhodonite: https://github.com/mrvollger/Rhodonite
 
-## Assembly to Assembly Alignment (Pair-wise Alignment Format (PAF) Generation)
+## Assembly-to-assembly Alignment (Pair-wise Alignment)
 https://github.com/mrvollger/asm-to-reference-alignment
 
-## SNV/Indel Calling
+## Short variants Calling (DeepVariant)
 https://github.com/mrvollger/k-mer-variant-phasing
 
 ## Mutational Spectrum analysis
 https://github.com/ryansohny/VCF2SPECTRUM
 
-# Haplotype selective chromatin accessibility analysis
+## Haplotype selective chromatin accessibility analysis
 https://github.com/mrvollger/SMaHT-DSA-figures
 
