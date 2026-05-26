@@ -3996,6 +3996,58 @@ plot = (
 
 ggsavefig_and_show(plot, "snv_amsd_results_cosine_dist_vs_neglog10pvalue_BH")
 
+
+# %%
+snv_centromere_amsd_result = pd.read_table("/mmfs1/gscratch/stergachislab/mhsohny/SMaHT/Improving_SomaticVariantCalling_through_DSA/ReferenceSet/COLO829BL_DSA_v3.0.0/01.SNV/SCNA_Adjusted/SNV_Density-based_Filtering/amsd_results_centromere.tsv", sep="\t")
+
+#snv_amsd_result = snv_amsd_result[(snv_amsd_result['comparison'] == "vs non-repeat") & (snv_amsd_result["group"] != "None_RE")].reset_index(drop=True)
+snv_centromere_amsd_result = apply_bh_correction(snv_centromere_amsd_result, ["pvalue"])
+
+snv_centromere_amsd_result['-log10pvalue_BH'] = -np.log10(snv_centromere_amsd_result['pvalue_BH'])
+
+snv_centromere_amsd_result = snv_centromere_amsd_result.sort_values(by=["-log10pvalue_BH", "group"], ascending=[False, True])
+snv_centromere_amsd_result['group'] = pd.Categorical(
+    snv_centromere_amsd_result['group'],
+    categories=snv_centromere_amsd_result['group'].unique(),
+    ordered=True
+)
+
+plot = (
+    ggplot(snv_centromere_amsd_result, aes(x='group', y='-log10pvalue_BH', fill='significant_pvalue_BH')) +
+    geom_bar(stat='identity', width=0.7, alpha=0.85) +
+    scale_fill_manual(values={True: '#4C72B0', False: '#C0C0C0'},
+                      labels={True: 'Significant', False: 'Not significant'}) +
+    geom_hline(yintercept=-np.log10(0.05), color='red', linetype='dashed', size=0.4) +
+    theme_minimal() +
+    theme(figure_size=(4, 3.5),
+          text=element_text(family='Arial'),
+          axis_line_x=element_line(size=0.5, color='black'),
+          axis_line_y=element_line(size=0.5, color='black'),
+          axis_title_x=element_text(size=6),
+          axis_title_y=element_text(size=6),
+          axis_text_x=element_text(rotation=45, hjust=1, size=6, color='black'),
+          axis_text_y=element_text(rotation=0, hjust=0.5, size=6, color='black'),
+          axis_ticks_major_x=element_line(size=0.5, color='black'),
+          axis_ticks_major_y=element_line(size=0.5, color='black'),
+          panel_grid_major_x=element_line(size=0.5),
+          panel_grid_major_y=element_line(size=0.5),
+          panel_grid_minor_x=element_line(size=0.25),
+          panel_grid_minor_y=element_line(size=0.25),
+          axis_ticks_minor_x=element_line(size=0.01, color='darkgray'),
+          axis_ticks_minor_y=element_line(size=0.02, color='darkgray'),
+          legend_title=element_blank(),
+          legend_text=element_text(size=6),
+          legend_position='top',
+          ) +
+    labs(title='',
+         x='Satellite Group',
+         y='-log10(Benjamini-Hochberg P value)') +
+    ylim(0, None)
+)
+
+ggsavefig_and_show(plot, "snv_satellite_amsd_results_cosine_dist_vs_neglog10pvalue_BH")
+
+
 # %%
 # INFO: Mutational Rate across different repeat elements / segmentally duplicated regions and etc.
 rc_length = dict()
