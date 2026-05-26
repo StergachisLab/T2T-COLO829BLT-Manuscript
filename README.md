@@ -8,6 +8,7 @@ Min-Hwan Sohn<sup>1,\*</sup>, Danilo Dubocanin<sup>2,\*</sup>, Mitchell R Vollge
 3. Department of Genome Sciences, University of Washington School of Medicine, Seattle, WA, USA
 4. Center for Developmental Biology and Regenerative Medicine, Seattle Children's Research Institute, Seattle, WA 98101, USA
 5. The Northwest Genomics Center, University of Washington, Seattle, WA, USA
+6. Coriell Institute for Medical Research, Camden, NJ, USA
 7. Pacific Northwest Research Institute, Seattle, WA, USA
 8. European Bioinformatics Institute, European Molecular Biology Laboratory (EMBL-EBI), Hinxton, UK
 9. Broad Institute of MIT and Harvard, Cambridge MA, USA
