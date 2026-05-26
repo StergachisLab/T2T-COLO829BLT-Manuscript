@@ -2023,3 +2023,819 @@ plot = (
 )
 
 ggsavefig_and_show(plot, "autocorrelation_plot_benchmark_tissues_combined_uid_sv_lag2000")
+
+
+# %%
+# INFO: Obtaining SV sets for COLO829BL and COLO829 
+# INFO: COLO829BL UL-ONT
+colobl_ulont_uid_sv, colobl_ulont_uid_sv_counts_table = get_sv_table_from_scanCSV(colobl_ulont_uid)
+
+colobl_ulont_uid_sv_pr = pr.PyRanges(
+    colobl_ulont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") - 1) # NOTE: For INS, start == end, so need to fix
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+colobl_ulont_uid_sv_pr_colo829bl_flagger_nucflag_overlap_idx = colobl_ulont_uid_sv_pr.overlap(colo829bl_flagger_nucflag)["_idx"].values
+
+colobl_ulont_uid_sv_filtered = (colobl_ulont_uid_sv
+    .with_row_index("_idx")
+    .filter(~pl.col("_idx").is_in(colobl_ulont_uid_sv_pr_colo829bl_flagger_nucflag_overlap_idx))
+    .drop("_idx"))
+
+colobl_ulont_uid_sv_filtered_total = colobl_ulont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.97) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+# INFO: COLO829TB UL-ONT
+colotb_ulont_uid_sv, colotb_ulont_uid_sv_counts_table = get_sv_table_from_scanCSV(colotb_ulont_uid)
+
+colotb_ulont_uid_sv_pr = pr.PyRanges(
+    colotb_ulont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") -1) # NOTE: For INS, start == end, so need to fix
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+colotb_ulont_uid_sv_pr_colo829bl_flagger_nucflag_100kb_del_overlap_idx = colotb_ulont_uid_sv_pr.overlap(colo829bl_flagger_nucflag_100kb_del)["_idx"].values
+
+colotb_ulont_uid_sv_filtered = (colotb_ulont_uid_sv
+    .with_row_index("_idx")
+    .filter(pl.col("_idx").is_in(colotb_ulont_uid_sv_pr_colo829bl_flagger_nucflag_100kb_del_overlap_idx))
+    .drop("_idx")) # NOTE: Here, instead of filtering out SNVs that overlap, we are keeping only those that overlap with the 100 kb flagged regions.
+
+colotb_ulont_uid_sv_filtered_total = colotb_ulont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.97) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+# INFO: Obtaining the overallped SVs (Added)
+colobl_colotb_ulont_overlapping_indel_id = set(colobl_ulont_uid_sv_filtered_total["indel_id"].to_list()) & set(colotb_ulont_uid_sv_filtered_total["indel_id"].to_list())
+
+# INFO: Removing the overlapped SVs (Added)
+# INFO: COLO829BL UL-ONT
+colobl_ulont_uid_sv_filtered_total = colobl_ulont_uid_sv_filtered_total.filter(
+    ~pl.col("indel_id").is_in(colobl_colotb_ulont_overlapping_indel_id)
+)
+
+colobl_ulont_uid_sv_filtered_unit = colobl_ulont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+    )
+
+colobl_ulont_uid_sv_filtered_nonunit = colobl_ulont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+    )
+
+colobl_ulont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(colobl_ulont_uid_sv_filtered_unit)
+colobl_ulont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(colobl_ulont_uid_sv_filtered_nonunit)
+
+colobl_ulont_uid_sv_filtered_total_collapsed = pl.concat([colobl_ulont_uid_sv_filtered_unit_collapsed, colobl_ulont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+# INFO: Removing the overlapped SVs (Added)
+# INFO: COLO829TB UL-ONT
+colotb_ulont_uid_sv_filtered_total = colotb_ulont_uid_sv_filtered_total.filter(
+    ~pl.col("indel_id").is_in(colobl_colotb_ulont_overlapping_indel_id)
+)
+
+colotb_ulont_uid_sv_filtered_unit = colotb_ulont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+    )
+
+colotb_ulont_uid_sv_filtered_nonunit = colotb_ulont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+    )
+
+colotb_ulont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(colotb_ulont_uid_sv_filtered_unit)
+colotb_ulont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(colotb_ulont_uid_sv_filtered_nonunit)
+
+colotb_ulont_uid_sv_filtered_total_collapsed = pl.concat([colotb_ulont_uid_sv_filtered_unit_collapsed, colotb_ulont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+
+# %%
+# INFO: Compute Autocorrelation 
+_, colobl_ulont_uid_sv_filtered_total_collapsed_counts_table = get_sv_table_from_scanCSV(colobl_ulont_uid_sv_filtered_total_collapsed, min_sv_length=100)
+_, colotb_ulont_uid_sv_filtered_total_collapsed_counts_table = get_sv_table_from_scanCSV(colotb_ulont_uid_sv_filtered_total_collapsed, min_sv_length=100)
+
+# INFO: COLO829BL UL-ONT
+ac_colobl_ulont_uid_sv_max_lag2000 = autocorr_range(colobl_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=2000)
+ac_colobl_ulont_uid_sv_max_lag3000 = autocorr_range(colobl_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=3000)
+ac_colobl_ulont_uid_sv_max_lag5000 = autocorr_range(colobl_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=5000)
+ac_colobl_ulont_uid_sv_max_lag15000 = autocorr_range(colobl_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=15000)
+
+
+# INFO: COLO829TB UL-ONT
+ac_colotb_ulont_uid_sv_max_lag2000 = autocorr_range(colotb_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=2000)
+ac_colotb_ulont_uid_sv_max_lag3000 = autocorr_range(colotb_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=3000)
+ac_colotb_ulont_uid_sv_max_lag5000 = autocorr_range(colotb_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=5000)
+ac_colotb_ulont_uid_sv_max_lag15000 = autocorr_range(colotb_ulont_uid_sv_filtered_total_collapsed_counts_table["count"], max_lag=15000)
+
+# INFO: Plot Autocorrelation for COLO829BL UL-ONT
+# INFO: Plot Autocorrelation (lag up to 2,000)
+plot = (
+    ggplot(ac_colobl_ulont_uid_sv_max_lag2000, aes(x="lag", y="autocorr")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    geom_vline(xintercept=171*1, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*2, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*3, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*4, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*5, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*6, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*7, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*8, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*9, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*10, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*11, color="red", linetype="dashed") +
+    annotate("text", x=171*1+10, y=0.3, label="171 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*2+10, y=0.3, label="171×2 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*3+10, y=0.3, label="171×3 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*4+10, y=0.3, label="171×4 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*5+10, y=0.3, label="171×5 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*6+10, y=0.3, label="171×6 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*7+10, y=0.3, label="171×7 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*8+10, y=0.3, label="171×8 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*9+10, y=0.3, label="171×9 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*10+10, y=0.3, label="171×10 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*11+10, y=0.3, label="171×11 bp", size=8, color="red", ha="left") +
+    labs(x="Lag between SV length vectors", y="Autocorrelation between SV events", title="Autocorrelation of SV lengths within Centromeres (COLO829BL)") +
+    theme_minimal() +
+    theme(
+        figure_size=(10, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray')
+        )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_colo829bl_ulont_uid_sv_lag2000")
+
+# INFO: Plot Autocorrelation (lag up to 15,000)
+plot = (
+    ggplot(ac_colobl_ulont_uid_sv_max_lag15000, aes(x="lag", y="autocorr")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    labs(x="Lag between SV length vectors", y="Autocorrelation between SV events", title="Autocorrelation of SV lengths within Centromeres (COLO829BL)") +
+    theme_minimal() +
+    theme(
+        figure_size=(10, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray')
+        )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_colo829bl_ulont_uid_sv_lag15000")
+
+# INFO: Plot Autocorrelation for COLO829TB Fiber-seq
+# INFO: Plot Autocorrelation (lag up to 2,000)
+plot = (
+    ggplot(ac_colotb_ulont_uid_sv_max_lag2000, aes(x="lag", y="autocorr")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    geom_vline(xintercept=171*1, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*2, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*3, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*4, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*5, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*6, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*7, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*8, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*9, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*10, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*11, color="red", linetype="dashed") +
+    annotate("text", x=171*1+10, y=0.3, label="171 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*2+10, y=0.3, label="171×2 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*3+10, y=0.3, label="171×3 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*4+10, y=0.3, label="171×4 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*5+10, y=0.3, label="171×5 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*6+10, y=0.3, label="171×6 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*7+10, y=0.3, label="171×7 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*8+10, y=0.3, label="171×8 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*9+10, y=0.3, label="171×9 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*10+10, y=0.3, label="171×10 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*11+10, y=0.3, label="171×11 bp", size=8, color="red", ha="left") +
+    labs(x="Lag between SV length vectors", y="Autocorrelation between SV events", title="Autocorrelation of SV lengths within Centromeres (COLO829TB)") +
+    theme_minimal() +
+    theme(
+        figure_size=(10, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray')
+        )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_colo829tb_ulont_uid_sv_lag2000")
+
+# INFO: Plot Autocorrelation (lag up to 15,000)
+plot = (
+    ggplot(ac_colotb_ulont_uid_sv_max_lag15000, aes(x="lag", y="autocorr")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    labs(x="Lag between SV length vectors", y="Autocorrelation between SV events", title="Autocorrelation of SV lengths within Centromeres (COLO829TB)") +
+    theme_minimal() +
+    theme(
+        figure_size=(10, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray')
+        )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_colo829tb_ulont_uid_sv_lag15000")
+
+# INFO: Overlay COLO829BL vs COLO829TB autocorrelation (lag up to 2,000)
+ac_ulont_combined_lag2000 = pl.concat([
+    ac_colobl_ulont_uid_sv_max_lag2000.with_columns(pl.lit("COLO829BL").alias("sample")),
+    ac_colotb_ulont_uid_sv_max_lag2000.with_columns(pl.lit("COLO829TB").alias("sample")),
+]).to_pandas()
+
+plot = (
+    ggplot(ac_ulont_combined_lag2000, aes(x="lag", y="autocorr", color="sample")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    scale_color_manual(values={"COLO829BL": "#196533", "COLO829TB": "#a97c50"}) +
+    geom_vline(xintercept=171*1, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*2, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*3, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*4, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*5, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*6, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*7, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*8, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*9, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*10, color="red", linetype="dashed") +
+    geom_vline(xintercept=171*11, color="red", linetype="dashed") +
+    annotate("text", x=171*1+10,  y=0.3, label="171 bp",    size=8, color="red", ha="left") +
+    annotate("text", x=171*2+10,  y=0.3, label="171×2 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*3+10,  y=0.3, label="171×3 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*4+10,  y=0.3, label="171×4 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*5+10,  y=0.3, label="171×5 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*6+10,  y=0.3, label="171×6 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*7+10,  y=0.3, label="171×7 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*8+10,  y=0.3, label="171×8 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*9+10,  y=0.3, label="171×9 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*10+10, y=0.3, label="171×10 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*11+10, y=0.3, label="171×11 bp", size=8, color="red", ha="left") +
+    labs(x="Lag between SV length vectors",
+         y="Autocorrelation between SV events",
+         title="Autocorrelation of SV lengths within Centromeres (COLO829BL vs COLO829TB)") +
+    theme_minimal() +
+    theme(
+        figure_size=(10, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray'),
+        legend_title=element_blank(),
+    )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_colo829bl_vs_colo829tb_ulont_uid_sv_lag2000") 
+
+# INFO: Overlay COLO829BL vs COLO829TB autocorrelation (lag up to 3,000)
+ac_ulont_combined_lag3000 = pl.concat([
+    ac_colobl_ulont_uid_sv_max_lag3000.with_columns(pl.lit("COLO829BL").alias("sample")),
+    ac_colotb_ulont_uid_sv_max_lag3000.with_columns(pl.lit("COLO829TB").alias("sample")),
+]).to_pandas()
+
+plot = (
+    ggplot(ac_ulont_combined_lag3000, aes(x="lag", y="autocorr", color="sample")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    scale_color_manual(values={"COLO829BL": "#ADEFD1", "COLO829TB": "#00203F"}) +
+    geom_vline(xintercept=171*1, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*2, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*3, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*4, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*5, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*6, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*7, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*8, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*9, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*10, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*11, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*12, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*13, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*14, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*15, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*16, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*17, color="red", linetype="dashed", size=0.2) +
+    annotate("text", x=171*1+10,  y=0.41, label="171 bp",    size=5, color="red", ha="left") +
+    annotate("text", x=171*2+10,  y=0.41, label="171×2 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*3+10,  y=0.41, label="171×3 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*4+10,  y=0.41, label="171×4 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*5+10,  y=0.41, label="171×5 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*6+10,  y=0.41, label="171×6 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*7+10,  y=0.41, label="171×7 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*8+10,  y=0.41, label="171×8 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*9+10,  y=0.41, label="171×9 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*10+10, y=0.41, label="171×10 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*11+10, y=0.41, label="171×11 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*12+10, y=0.41, label="171×12 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*13+10, y=0.41, label="171×13 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*14+10, y=0.41, label="171×14 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*15+10, y=0.41, label="171×15 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*16+10, y=0.41, label="171×16 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*17+10, y=0.41, label="171×17 bp", size=5, color="red", ha="left") +
+    labs(x="Lag between SV length vectors",
+         y="Autocorrelation between SV events",
+         title="Autocorrelation of SV lengths within Centromeres (COLO829BL vs COLO829TB)") +
+    theme_minimal() +
+    theme(
+        figure_size=(10, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray'),
+        legend_title=element_blank(),
+    )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_colo829bl_vs_colo829tb_ulont_uid_sv_lag3000")
+
+# INFO: Overlay COLO829BL vs COLO829TB autocorrelation (lag up to 5,000)
+ac_ulont_combined_lag5000 = pl.concat([
+    ac_colobl_ulont_uid_sv_max_lag5000.with_columns(pl.lit("COLO829BL").alias("sample")),
+    ac_colotb_ulont_uid_sv_max_lag5000.with_columns(pl.lit("COLO829TB").alias("sample")),
+]).to_pandas()
+
+plot = (
+    ggplot(ac_ulont_combined_lag5000, aes(x="lag", y="autocorr", color="sample")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    scale_color_manual(values={"COLO829BL": "#ADEFD1", "COLO829TB": "#00203F"}) +
+    geom_vline(xintercept=171*1, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*2, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*3, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*4, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*5, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*6, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*7, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*8, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*9, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*10, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*11, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*12, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*13, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*14, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*15, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*16, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*17, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*18, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*19, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*20, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*21, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*22, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*23, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*24, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*25, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*26, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*27, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*28, color="red", linetype="dashed", size=0.2) +
+    geom_vline(xintercept=171*29, color="red", linetype="dashed", size=0.2) +
+    annotate("text", x=171*1+10,  y=0.41, label="171 bp",    size=5, color="red", ha="left") +
+    annotate("text", x=171*2+10,  y=0.41, label="171×2 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*3+10,  y=0.41, label="171×3 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*4+10,  y=0.41, label="171×4 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*5+10,  y=0.41, label="171×5 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*6+10,  y=0.41, label="171×6 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*7+10,  y=0.41, label="171×7 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*8+10,  y=0.41, label="171×8 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*9+10,  y=0.41, label="171×9 bp",  size=5, color="red", ha="left") +
+    annotate("text", x=171*10+10, y=0.41, label="171×10 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*11+10, y=0.41, label="171×11 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*12+10, y=0.41, label="171×12 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*13+10, y=0.41, label="171×13 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*14+10, y=0.41, label="171×14 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*15+10, y=0.41, label="171×15 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*16+10, y=0.41, label="171×16 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*17+10, y=0.41, label="171×17 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*18+10, y=0.41, label="171×18 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*19+10, y=0.41, label="171×19 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*20+10, y=0.41, label="171×20 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*21+10, y=0.41, label="171×21 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*22+10, y=0.41, label="171×22 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*23+10, y=0.41, label="171×23 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*24+10, y=0.41, label="171×24 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*25+10, y=0.41, label="171×25 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*26+10, y=0.41, label="171×26 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*27+10, y=0.41, label="171×27 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*28+10, y=0.41, label="171×28 bp", size=5, color="red", ha="left") +
+    annotate("text", x=171*29+10, y=0.41, label="171×29 bp", size=5, color="red", ha="left") +
+    labs(x="Lag between SV length vectors",
+         y="Autocorrelation between SV events",
+         title="Autocorrelation of SV lengths within Centromeres (COLO829BL vs COLO829TB)") +
+    theme_minimal() +
+    theme(
+        figure_size=(13, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray'),
+        legend_title=element_blank(),
+    )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_colo829bl_vs_colo829tb_ulont_uid_sv_lag5000")
+
+
+# %%
+# INFO: ST001 Lung ONT
+st001_lung_ont_uid = pl.read_csv(f"{centroindel_benchmark_dir}/ST001_Lung_ONT/ST001_Lung_ONT_CDRfromPacBio_unitsized-indels.bed", separator="\t")
+st001_lung_ont_uid_sv, st001_lung_ont_uid_sv_counts_table = get_sv_table_from_scanCSV(st001_lung_ont_uid)
+
+st001_lung_ont_uid_sv_pr = pr.PyRanges(
+    st001_lung_ont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") -1)
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+st001_lung_ont_uid_sv_pr_st001_flagger_overlap_idx = st001_lung_ont_uid_sv_pr.overlap(st001_flagger)["_idx"].values
+
+st001_lung_ont_uid_sv_filtered = (st001_lung_ont_uid_sv
+    .with_row_index("_idx")
+    .filter(~pl.col("_idx").is_in(st001_lung_ont_uid_sv_pr_st001_flagger_overlap_idx))
+    .drop("_idx")) 
+
+st001_lung_ont_uid_sv_filtered_total = st001_lung_ont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.995) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+st001_lung_ont_uid_sv_filtered_unit = st001_lung_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+)
+
+st001_lung_ont_uid_sv_filtered_nonunit = st001_lung_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+)
+
+st001_lung_ont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(st001_lung_ont_uid_sv_filtered_unit)
+st001_lung_ont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(st001_lung_ont_uid_sv_filtered_nonunit)
+
+st001_lung_ont_uid_sv_filtered_unit_total_collapsed = pl.concat([st001_lung_ont_uid_sv_filtered_unit_collapsed, st001_lung_ont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+# INFO: ST001 Liver ONT
+st001_liver_ont_uid = pl.read_csv(f"{centroindel_benchmark_dir}/ST001_Liver_ONT/ST001_Liver_ONT_CDRfromPacBio_unitsized-indels.bed", separator="\t")
+st001_liver_ont_uid_sv, st001_liver_ont_uid_sv_counts_table = get_sv_table_from_scanCSV(st001_liver_ont_uid)
+
+st001_liver_ont_uid_sv_pr = pr.PyRanges(
+    st001_liver_ont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") -1)
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+st001_liver_ont_uid_sv_pr_st001_flagger_overlap_idx = st001_liver_ont_uid_sv_pr.overlap(st001_flagger)["_idx"].values
+
+st001_liver_ont_uid_sv_filtered = (st001_liver_ont_uid_sv
+    .with_row_index("_idx")
+    .filter(~pl.col("_idx").is_in(st001_liver_ont_uid_sv_pr_st001_flagger_overlap_idx))
+    .drop("_idx")) 
+
+st001_liver_ont_uid_sv_filtered_total = st001_liver_ont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.995) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+st001_liver_ont_uid_sv_filtered_unit = st001_liver_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+)
+
+st001_liver_ont_uid_sv_filtered_nonunit = st001_liver_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+)
+
+st001_liver_ont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(st001_liver_ont_uid_sv_filtered_unit)
+st001_liver_ont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(st001_liver_ont_uid_sv_filtered_nonunit)
+
+st001_liver_ont_uid_sv_filtered_unit_total_collapsed = pl.concat([st001_liver_ont_uid_sv_filtered_unit_collapsed, st001_liver_ont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+# INFO: ST002 Lung ONT
+st002_lung_ont_uid = pl.read_csv(f"{centroindel_benchmark_dir}/ST002_Lung_ONT/ST002_Lung_ONT_CDRfromPacBio_unitsized-indels.bed", separator="\t")
+st002_lung_ont_uid_sv, st002_lung_ont_uid_sv_counts_table = get_sv_table_from_scanCSV(st002_lung_ont_uid)
+
+st002_lung_ont_uid_sv_pr = pr.PyRanges(
+    st002_lung_ont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") -1)
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+st002_lung_ont_uid_sv_pr_st002_flagger_overlap_idx = st002_lung_ont_uid_sv_pr.overlap(st002_flagger)["_idx"].values
+
+st002_lung_ont_uid_sv_filtered = (st002_lung_ont_uid_sv
+    .with_row_index("_idx")
+    .filter(~pl.col("_idx").is_in(st002_lung_ont_uid_sv_pr_st002_flagger_overlap_idx))
+    .drop("_idx")) 
+
+st002_lung_ont_uid_sv_filtered_total = st002_lung_ont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.995) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+st002_lung_ont_uid_sv_filtered_unit = st002_lung_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+)
+
+st002_lung_ont_uid_sv_filtered_nonunit = st002_lung_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+)
+
+st002_lung_ont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(st002_lung_ont_uid_sv_filtered_unit)
+st002_lung_ont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(st002_lung_ont_uid_sv_filtered_nonunit)
+
+st002_lung_ont_uid_sv_filtered_unit_total_collapsed = pl.concat([st002_lung_ont_uid_sv_filtered_unit_collapsed, st002_lung_ont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+# INFO: ST002 Colon ONT
+st002_colon_ont_uid = pl.read_csv(f"{centroindel_benchmark_dir}/ST002_Colon_ONT/ST002_Colon_ONT_CDRfromPacBio_unitsized-indels.bed", separator="\t")
+st002_colon_ont_uid_sv, st002_colon_ont_uid_sv_counts_table = get_sv_table_from_scanCSV(st002_colon_ont_uid)
+
+st002_colon_ont_uid_sv_pr = pr.PyRanges(
+    st002_colon_ont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") -1)
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+st002_colon_ont_uid_sv_pr_st002_flagger_overlap_idx = st002_colon_ont_uid_sv_pr.overlap(st002_flagger)["_idx"].values
+
+st002_colon_ont_uid_sv_filtered = (st002_colon_ont_uid_sv
+    .with_row_index("_idx")
+    .filter(~pl.col("_idx").is_in(st002_colon_ont_uid_sv_pr_st002_flagger_overlap_idx))
+    .drop("_idx")) 
+
+st002_colon_ont_uid_sv_filtered_total = st002_colon_ont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.995) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+st002_colon_ont_uid_sv_filtered_unit = st002_colon_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+)
+
+st002_colon_ont_uid_sv_filtered_nonunit = st002_colon_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+)
+
+st002_colon_ont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(st002_colon_ont_uid_sv_filtered_unit)
+st002_colon_ont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(st002_colon_ont_uid_sv_filtered_nonunit)
+
+st002_colon_ont_uid_sv_filtered_unit_total_collapsed = pl.concat([st002_colon_ont_uid_sv_filtered_unit_collapsed, st002_colon_ont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+# INFO: ST003 Brain ONT
+st003_brain_ont_uid = pl.read_csv(f"{centroindel_benchmark_dir}/ST003_Brain_ONT/ST003_Brain_ONT_CDRfromPacBio_unitsized-indels.bed", separator="\t")
+st003_brain_ont_uid_sv, st003_brain_ont_uid_sv_counts_table = get_sv_table_from_scanCSV(st003_brain_ont_uid)
+
+st003_brain_ont_uid_sv_pr = pr.PyRanges(
+    st003_brain_ont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") -1)
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+st003_brain_ont_uid_sv_pr_st003_flagger_overlap_idx = st003_brain_ont_uid_sv_pr.overlap(st003_flagger)["_idx"].values
+
+st003_brain_ont_uid_sv_filtered = (st003_brain_ont_uid_sv
+    .with_row_index("_idx")
+    .filter(~pl.col("_idx").is_in(st003_brain_ont_uid_sv_pr_st003_flagger_overlap_idx))
+    .drop("_idx")) 
+
+st003_brain_ont_uid_sv_filtered_total = st003_brain_ont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.995) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+st003_brain_ont_uid_sv_filtered_unit = st003_brain_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+)
+
+st003_brain_ont_uid_sv_filtered_nonunit = st003_brain_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+)
+
+st003_brain_ont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(st003_brain_ont_uid_sv_filtered_unit)
+st003_brain_ont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(st003_brain_ont_uid_sv_filtered_nonunit)
+
+st003_brain_ont_uid_sv_filtered_unit_total_collapsed = pl.concat([st003_brain_ont_uid_sv_filtered_unit_collapsed, st003_brain_ont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+# INFO: ST004 Brain ONT
+st004_brain_ont_uid = pl.read_csv(f"{centroindel_benchmark_dir}/ST004_Brain_ONT/ST004_Brain_ONT_CDRfromPacBio_unitsized-indels.bed", separator="\t")
+st004_brain_ont_uid_sv, st004_brain_ont_uid_sv_counts_table = get_sv_table_from_scanCSV(st004_brain_ont_uid)
+
+st004_brain_ont_uid_sv_pr = pr.PyRanges(
+    st004_brain_ont_uid_sv
+    .with_row_index("_idx")
+    .with_columns(
+        pl.when(pl.col("indel_type") == "INS")
+            .then(pl.col("start") -1)
+            .otherwise(pl.col("start"))
+            .alias("start")
+    )
+    .to_pandas()
+    .rename(columns={"#chrom": "Chromosome", "start": "Start", "end": "End"})
+)
+
+st004_brain_ont_uid_sv_pr_st004_flagger_overlap_idx = st004_brain_ont_uid_sv_pr.overlap(st004_flagger)["_idx"].values
+
+st004_brain_ont_uid_sv_filtered = (st004_brain_ont_uid_sv
+    .with_row_index("_idx")
+    .filter(~pl.col("_idx").is_in(st004_brain_ont_uid_sv_pr_st004_flagger_overlap_idx))
+    .drop("_idx")) 
+
+st004_brain_ont_uid_sv_filtered_total = st004_brain_ont_uid_sv_filtered.filter(
+    (pl.col("gc_identity") >= 0.995) &
+    (pl.col("aligned_fraction") >= 0.995) &
+    (pl.col("min_dist_query") / pl.col("read_length") > 0.1)
+    )
+
+st004_brain_ont_uid_sv_filtered_unit = st004_brain_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "true")
+)
+
+st004_brain_ont_uid_sv_filtered_nonunit = st004_brain_ont_uid_sv_filtered_total.filter(
+    (pl.col("is_unit_sized") == "false")
+)
+
+st004_brain_ont_uid_sv_filtered_unit_collapsed = collapse_overlapping_sv(st004_brain_ont_uid_sv_filtered_unit)
+st004_brain_ont_uid_sv_filtered_nonunit_collapsed = collapse_overlapping_non_unit_sv(st004_brain_ont_uid_sv_filtered_nonunit)
+
+st004_brain_ont_uid_sv_filtered_unit_total_collapsed = pl.concat([st004_brain_ont_uid_sv_filtered_unit_collapsed, st004_brain_ont_uid_sv_filtered_nonunit_collapsed.drop("has_intra_read_conflict")], how="align").sort(["#chrom", "start", "end"])
+
+_, st001_lung_ont_uid_sv_filtered_unit_total_collapsed_counts_table = get_sv_table_from_scanCSV(st001_lung_ont_uid_sv_filtered_unit_total_collapsed, min_sv_length=100)
+_, st001_liver_ont_uid_sv_filtered_unit_total_collapsed_counts_table = get_sv_table_from_scanCSV(st001_liver_ont_uid_sv_filtered_unit_total_collapsed, min_sv_length=100)
+_, st002_lung_ont_uid_sv_filtered_unit_total_collapsed_counts_table = get_sv_table_from_scanCSV(st002_lung_ont_uid_sv_filtered_unit_total_collapsed, min_sv_length=100)
+_, st002_colon_ont_uid_sv_filtered_unit_total_collapsed_counts_table = get_sv_table_from_scanCSV(st002_colon_ont_uid_sv_filtered_unit_total_collapsed, min_sv_length=100)
+_, st003_brain_ont_uid_sv_filtered_unit_total_collapsed_counts_table = get_sv_table_from_scanCSV(st003_brain_ont_uid_sv_filtered_unit_total_collapsed, min_sv_length=100)
+_, st004_brain_ont_uid_sv_filtered_unit_total_collapsed_counts_table = get_sv_table_from_scanCSV(st004_brain_ont_uid_sv_filtered_unit_total_collapsed, min_sv_length=100)
+
+# INFO: Compute Autocorrelation
+ac_st001_liver_ont_uid_sv_max_lag2000 = autocorr_range(st001_liver_ont_uid_sv_filtered_unit_total_collapsed_counts_table["count"], max_lag=2000)
+ac_st001_lung_ont_uid_sv_max_lag2000 = autocorr_range(st001_lung_ont_uid_sv_filtered_unit_total_collapsed_counts_table["count"], max_lag=2000)
+ac_st002_colon_ont_uid_sv_max_lag2000 = autocorr_range(st002_colon_ont_uid_sv_filtered_unit_total_collapsed_counts_table["count"], max_lag=2000)
+ac_st002_lung_ont_uid_sv_max_lag2000 = autocorr_range(st002_lung_ont_uid_sv_filtered_unit_total_collapsed_counts_table["count"], max_lag=2000)
+ac_st003_brain_ont_uid_sv_max_lag2000 = autocorr_range(st003_brain_ont_uid_sv_filtered_unit_total_collapsed_counts_table["count"], max_lag=2000)
+ac_st004_brain_ont_uid_sv_max_lag2000 = autocorr_range(st004_brain_ont_uid_sv_filtered_unit_total_collapsed_counts_table["count"], max_lag=2000)
+
+# INFO: Overlay all 6 benchmark tissues autocorrelation (lag up to 2,000)
+benchmark_sample_order = [
+    "ST001 Liver", "ST001 Lung",
+    "ST002 Colon", "ST002 Lung",
+    "ST003 Brain", "ST004 Brain",
+]
+
+ac_benchmark_ont_combined_lag2000 = pl.concat([
+    ac_st001_liver_ont_uid_sv_max_lag2000.with_columns(pl.lit("ST001 Liver").alias("sample")),
+    ac_st001_lung_ont_uid_sv_max_lag2000.with_columns(pl.lit("ST001 Lung").alias("sample")),
+    ac_st002_colon_ont_uid_sv_max_lag2000.with_columns(pl.lit("ST002 Colon").alias("sample")),
+    ac_st002_lung_ont_uid_sv_max_lag2000.with_columns(pl.lit("ST002 Lung").alias("sample")),
+    ac_st003_brain_ont_uid_sv_max_lag2000.with_columns(pl.lit("ST003 Brain").alias("sample")),
+    ac_st004_brain_ont_uid_sv_max_lag2000.with_columns(pl.lit("ST004 Brain").alias("sample")),
+]).to_pandas()
+
+ac_benchmark_ont_combined_lag2000["sample"] = pd.Categorical(
+    ac_benchmark_ont_combined_lag2000["sample"],
+    categories=benchmark_sample_order, ordered=True,
+)
+
+benchmark_color_map = {
+    "ST001 Liver": "#01befe",
+    "ST001 Lung":  "#ffdd00",
+    "ST002 Colon": "#ff7d00",
+    "ST002 Lung":  "#ff006d",
+    "ST003 Brain": "#adff02",
+    "ST004 Brain": "#8f00ff",
+}
+
+plot = (
+    ggplot(ac_benchmark_ont_combined_lag2000, aes(x="lag", y="autocorr", color="sample")) +
+    geom_line() +
+    scale_x_continuous(labels=comma_format()) +
+    scale_color_manual(values=benchmark_color_map) +
+    geom_vline(xintercept=171*1, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*2, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*3, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*4, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*5, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*6, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*7, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*8, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*9, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*10, color="red", linetype="dashed", size=0.3) +
+    geom_vline(xintercept=171*11, color="red", linetype="dashed", size=0.3) +
+    annotate("text", x=171*1+10,  y=0.3, label="171 bp",    size=8, color="red", ha="left") +
+    annotate("text", x=171*2+10,  y=0.3, label="171×2 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*3+10,  y=0.3, label="171×3 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*4+10,  y=0.3, label="171×4 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*5+10,  y=0.3, label="171×5 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*6+10,  y=0.3, label="171×6 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*7+10,  y=0.3, label="171×7 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*8+10,  y=0.3, label="171×8 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*9+10,  y=0.3, label="171×9 bp",  size=8, color="red", ha="left") +
+    annotate("text", x=171*10+10, y=0.3, label="171×10 bp", size=8, color="red", ha="left") +
+    annotate("text", x=171*11+10, y=0.3, label="171×11 bp", size=8, color="red", ha="left") +
+    labs(x="Lag between SV length vectors",
+         y="Autocorrelation between SV events",
+         title="Autocorrelation of SV lengths within Centromeres (Benchmark tissues)") +
+    theme_minimal() +
+    theme(
+        figure_size=(10, 5),
+        text=element_text(family='Arial'),
+        axis_text_x=element_text(color='black'),
+        axis_text_y=element_text(color='black'),
+        axis_line_x=element_line(size=0.5, color='black'),
+        axis_line_y=element_line(size=0.5, color='black'),
+        axis_ticks_major=element_line(size=0.5, color='black'),
+        axis_ticks_minor_x=element_line(size=0.5, color='darkgray'),
+        axis_ticks_minor_y=element_line(size=0.5, color='darkgray'),
+        legend_title=element_blank(),
+    )
+)
+
+ggsavefig_and_show(plot, "autocorrelation_plot_benchmark_tissues_ont_combined_uid_sv_lag2000")
+
+# %%
