@@ -285,7 +285,7 @@ def autocorr_range(series: pl.Series, max_lag: int) -> pl.DataFrame:
     })
 
 # %%
-# NOTE:
+# NOTE: 
 # min_dist_query / read_length
 # min_dist_ref / alignment_span
 # %%
@@ -548,13 +548,13 @@ colotb_fiberseq_unit_sv_non_cdr = colotb_fiberseq_counts_table.filter(colotb_fib
 # INFO: CDR vs. Non-CDR for COLO829TB
 colotb_fiberseq_contingency_table = [
     [colotb_fiberseq_unit_sv_cdr, colotb_fiberseq_unit_sv_non_cdr],
-    [colo829bl_cdr.subtract_overlaps(colo829bl_flagger_nucflag_100kb_del).length, colo829bl_centromere.subtract_overlaps(colo829bl_flagger_nucflag_100kb_del).length - colo829bl_cdr.subtract_overlaps(colo829bl_flagger_nucflag_100kb_del).length]
+    [colo829bl_cdr.intersect_overlaps(colo829bl_flagger_nucflag_100kb_del).length, colo829bl_centromere.intersect_overlaps(colo829bl_flagger_nucflag_100kb_del).length - colo829bl_cdr.intersect_overlaps(colo829bl_flagger_nucflag_100kb_del).length]
     ]
 
 colotb_fiberseq_res = chi2_contingency(colotb_fiberseq_contingency_table)
 
-colotb_fiberseq_rate_cdr = colotb_fiberseq_unit_sv_cdr / colo829bl_cdr.subtract_overlaps(colo829bl_flagger_nucflag_100kb_del).length
-colotb_fiberseq_rate_non_cdr = colotb_fiberseq_unit_sv_non_cdr / (colo829bl_centromere.subtract_overlaps(colo829bl_flagger_nucflag_100kb_del).length - colo829bl_cdr.subtract_overlaps(colo829bl_flagger_nucflag_100kb_del).length)
+colotb_fiberseq_rate_cdr = colotb_fiberseq_unit_sv_cdr / colo829bl_cdr.intersect_overlaps(colo829bl_flagger_nucflag_100kb_del).length
+colotb_fiberseq_rate_non_cdr = colotb_fiberseq_unit_sv_non_cdr / (colo829bl_centromere.intersect_overlaps(colo829bl_flagger_nucflag_100kb_del).length - colo829bl_cdr.intersect_overlaps(colo829bl_flagger_nucflag_100kb_del).length)
 
 print(f"Chi-squared p-value: {colotb_fiberseq_res.pvalue}")
 print(f"Rate of unit-length α-satellite SVs within CDR of COLO829:{colotb_fiberseq_rate_cdr}")
@@ -1097,11 +1097,11 @@ df.loc[df["End"] - df["Start"] == 0, "Start"] -= 1
 
 colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval = pr.PyRanges(df)
 
-colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval_ex1kb = colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval.extend_ranges(1_000)
+colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval_ex1kb = colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval.extend_ranges(1_000).merge_overlaps()
 
-colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval_ex2kb = colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval.extend_ranges(2_000)
+colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval_ex2kb = colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval.extend_ranges(2_000).merge_overlaps()
 
-colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval_ex10kb = colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval.extend_ranges(5_000)
+colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval_ex10kb = colotb_fiberseq_uid_sv_filtered_unit_collapsed_fixed_interval.extend_ranges(5_000).merge_overlaps()
 
 colotb_snv_pr = pr.PyRanges(pd.DataFrame({
     "Chromosome": colotb_snv["CHROM"],
