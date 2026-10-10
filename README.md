@@ -20,7 +20,9 @@ Min-Hwan Sohn<sup>1,\*</sup>, Danilo Dubocanin<sup>2,\*</sup>, Mitchell R Vollge
 
 Cancer genomes harbor extensive somatic genetic and epigenetic variation, yet large portions of the genome remain inaccessible to conventional reference-based analyses. Here, we demonstrate that pairing a near-telomere-to-telomere (T2T) diploid assembly of a donor with deep short- and long-read sequencing of their melanoma reveals that 16% of somatic variants localize to sequences absent from GRCh38, with satellite repeats acting as hotspots for UV-associated mutagenesis. Centromere kinetochore binding domains emerge as focal sites of chromosome arm aneuploidy breakpoints and somatic genetic variation, features we further demonstrate are also present in non-cancerous tissues. In contrast, extensive epigenetic remodeling of kinetochore binding domains appears specific to oncogenesis. Single-molecule telomere analyses reconstruct the cycle of telomere erosion and telomerase-mediated extension during tumor evolution, while haplotype-resolved chromatin maps reveal widespread somatic epimutations impacting regulatory elements. Together, these findings define previously inaccessible dimensions of somatic variation and establish a framework for telomere-to-telomere studies of human mosaicism.
 
-Code used in analysis/figure generation as part of the T2T COLO829BLT manuscript: [Link](https://www.biorxiv.org/content/10.1101/2025.10.10.681725v1.full)
+Please cite this article as: Sohn & Dubocanin et al., A telomere-to-telomere map of somatic mutation burden and functional impact in a cancer, Cell (2026), [https://doi.org/10.1016/j.cell.2026.09.033](https://doi.org/10.1016/j.cell.2026.09.033)
+
+Code used in analysis/figure generation as part of the SMaHT Assembly Working Group (WG) manuscript [Link](https://doi.org/10.1016/j.cell.2026.09.033) and SMaHT Benchmarking Flagship manuscript [Link](https://doi.org/10.1016/j.cell.2026.09.037) 
 
 ## Repeat Annotation on the Assembly
 RepeatMasker, Tandem Repeat Finder (TRF) and DupMasker
@@ -37,3 +39,7 @@ https://github.com/ryansohny/VCF2SPECTRUM
 
 ## Haplotype selective chromatin accessibility analysis
 https://github.com/mrvollger/SMaHT-DSA-figures
+
+## Misc.
+### DiMeLo-seq data availability
+CENPA DiMeLo-seq data for COLO829BL and COLO829 available in [Link](https://stergachis-manuscript-data.s3.us-west-1.amazonaws.com/2025/Min-Hwan_Sohn_et_al/)
