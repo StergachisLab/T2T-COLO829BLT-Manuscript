@@ -43,3 +43,8 @@ https://github.com/mrvollger/SMaHT-DSA-figures
 ## Misc.
 ### DiMeLo-seq data availability
 CENPA DiMeLo-seq data for COLO829BL and COLO829 available in [Link](https://stergachis-manuscript-data.s3.us-west-1.amazonaws.com/2025/Min-Hwan_Sohn_et_al/)
+
+## Minor Correction
+### Typo in the manuscript
+- p.6637 in the main text: "For example, in the most extreme case, along t(14;16)(p10;p10), the native ~~chr14-hap1~~ chr14-hap2 CDR was silenced in COLO829 cells, and instead only a single CDR located 1.7 Mb away was utilized in COLO829 cells (Figure 5A).
+- p.6638 in the figure legend: "(F) (Left) Diagram of study design for testing CDR stability across different organ systems in two individuals. (Right, top) CpG methylation in lung and ~~colon~~liver tissue in ST001. (Right, bottom) CpG methylation in lung and ~~liver~~colon tissue in ST002."
